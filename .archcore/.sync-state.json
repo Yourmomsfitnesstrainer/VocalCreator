@@ -121,6 +121,56 @@
       "source": "lyrics-timing/unreferenced-testing.adr.md",
       "target": "lyrics-timing/acoustic-evaluation.spec.md",
       "type": "related"
+    },
+    {
+      "source": "vocal-studio/vocal-audio.spec.md",
+      "target": "vocal-studio/vocal-studio.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/vocal-melody.spec.md",
+      "target": "vocal-studio/vocal-studio.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/vocal-player.spec.md",
+      "target": "vocal-studio/vocal-studio.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/vocal-studio-implementation.plan.md",
+      "target": "vocal-studio/vocal-audio.spec.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/vocal-studio-implementation.plan.md",
+      "target": "vocal-studio/vocal-melody.spec.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/vocal-studio-implementation.plan.md",
+      "target": "vocal-studio/vocal-player.spec.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/vocal-audio.spec.md",
+      "target": "architecture/generation-pipeline.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/vocal-melody.spec.md",
+      "target": "architecture/lyrics-alignment.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/vocal-studio-implementation.plan.md",
+      "target": "lyrics-timing/acoustic-evaluation.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/vocal-studio.prd.md",
+      "target": "lyrics-timing/word-timing-accuracy.prd.md",
+      "type": "related"
     }
   ]
 }
