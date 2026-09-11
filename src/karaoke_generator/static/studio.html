@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>VocalCreator Studio</title>
+  <link rel="stylesheet" href="/static/studio.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-workspace">Перейти к временной шкале</a>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
+    <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M7 5v14M17 5v14"/></symbol>
+    <symbol id="icon-volume" viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19V5Zm4 4c1.4 1.5 1.4 4.5 0 6m3-9c3.4 3.2 3.4 8.8 0 12"/></symbol>
+    <symbol id="icon-muted" viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19V5Zm4.5 5 5 5m0-5-5 5"/></symbol>
+    <symbol id="icon-loop" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3"/></symbol>
+    <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 16V3m0 0L7 8m5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v13m0 0 5-5m-5 5-5-5M4 19v2h16v-2"/></symbol>
+    <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 6.5h6l2 2h10v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6.5Z"/></symbol>
+    <symbol id="icon-retry" viewBox="0 0 24 24"><path d="M20 8V3m0 0h-5m5 0-4 4a7 7 0 1 0 1.5 7.5"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="VocalCreator Studio, главная">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+      <span>VocalCreator <strong>Studio</strong></span>
+    </a>
+    <nav aria-label="Режимы приложения">
+      <a class="nav-link active" href="/" aria-current="page">Студия</a>
+      <a class="nav-link" href="/karaoke">Karaoke MP4</a>
+    </nav>
+    <div id="connection" class="connection" role="status"><span></span>Локальный сервис</div>
+  </header>
+
+  <main class="app-shell">
+    <aside class="sidebar" aria-label="Проект и дорожки">
+      <section class="sidebar-section setup-section">
+        <div class="section-heading">
+          <div><h1>Новый разбор</h1><p>Аудио и текст останутся на этом Mac.</p></div>
+        </div>
+        <form id="studio-form" enctype="multipart/form-data">
+          <fieldset class="segmented">
+            <legend>Тип аудио</legend>
+            <label><input type="radio" name="input_type" value="mix" checked><span>Песня с музыкой</span></label>
+            <label><input type="radio" name="input_type" value="vocal"><span>Готовый вокал</span></label>
+          </fieldset>
+
+          <label class="file-field">
+            <span>Аудиофайл</span>
+            <input id="audio-input" name="audio" type="file" accept="audio/*" required>
+            <span class="file-prompt"><svg><use href="#icon-upload"/></svg><b>Выбрать MP3 или WAV</b><small id="audio-name">До 5 минут: нормальный рабочий пример</small></span>
+          </label>
+          <label class="file-field">
+            <span>Точный текст</span>
+            <input id="lyrics-input" name="lyrics" type="file" accept=".txt,text/plain" required>
+            <span class="file-prompt compact"><svg><use href="#icon-folder"/></svg><b>Выбрать UTF-8 TXT</b><small id="lyrics-name">Слова и повторы не переписываются</small></span>
+          </label>
+
+          <label class="select-label" for="language">Язык</label>
+          <select id="language" name="language">
+            <option value="auto">Определить автоматически</option>
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+          </select>
+
+          <details class="advanced">
+            <summary>Модели анализа</summary>
+            <label for="separator-backend">Разделение дорожек</label>
+            <select id="separator-backend" name="separator_backend">
+              <option value="demucs">Demucs htdemucs</option>
+              <option value="melband-roformer">Mel-Band RoFormer (эксперимент)</option>
+            </select>
+            <label for="pitch-backend">Высота голоса</label>
+            <select id="pitch-backend" name="pitch_backend">
+              <option value="torchcrepe">torchcrepe full</option>
+              <option value="autocorrelation">Автокорреляция (baseline)</option>
+            </select>
+            <p>Baseline нужен для диагностики и не считается выбранной моделью качества.</p>
+          </details>
+
+          <button id="analyze-button" class="primary-button" type="submit">
+            <svg aria-hidden="true"><use href="#icon-play"/></svg><span>Начать анализ</span>
+          </button>
+          <p id="form-error" class="inline-error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <section id="progress-section" class="sidebar-section progress-section" aria-live="polite" hidden>
+        <div class="section-heading"><div><h2 id="progress-title">Анализ</h2><p id="progress-detail">Задание поставлено в очередь</p></div></div>
+        <ol id="stage-list" class="stage-list"></ol>
+      </section>
+
+      <section id="mixer-section" class="sidebar-section mixer-section" hidden>
+        <div class="section-heading"><div><h2>Микшер</h2><p>Общий clock, независимая громкость.</p></div></div>
+        <div id="track-controls"></div>
+      </section>
+
+      <section class="sidebar-section library-section">
+        <div class="section-heading"><div><h2>Сохранённые</h2><p>Открываются без повторного анализа.</p></div><button id="refresh-library" class="icon-button" type="button" aria-label="Обновить список"><svg><use href="#icon-retry"/></svg></button></div>
+        <div id="library-list" class="library-list"><p class="empty-copy">Пока нет результатов.</p></div>
+      </section>
+    </aside>
+
+    <section id="main-workspace" class="workspace" aria-label="Вокальная временная шкала">
+      <div class="transport" aria-label="Управление воспроизведением">
+        <button id="play-button" class="play-button" type="button" aria-label="Воспроизвести" disabled><svg><use href="#icon-play"/></svg></button>
+        <output id="time-current" class="time-readout">0:00.000</output>
+        <span class="time-separator">/</span>
+        <output id="time-total" class="time-readout secondary">0:00.000</output>
+        <label class="seek-control"><span class="sr-only">Позиция воспроизведения</span><input id="seek-slider" type="range" min="0" max="1" step="0.001" value="0" disabled></label>
+        <div class="transport-group ab-controls">
+          <button id="set-a" type="button" disabled>A <span id="a-value">·</span></button>
+          <button id="set-b" type="button" disabled>B <span id="b-value">·</span></button>
+          <button id="loop-button" class="icon-button" type="button" aria-label="Повторять фрагмент A–B" aria-pressed="false" disabled><svg><use href="#icon-loop"/></svg></button>
+          <button id="clear-loop" type="button" disabled>Сбросить</button>
+        </div>
+        <label class="zoom-control" for="zoom-slider"><span>Масштаб</span><input id="zoom-slider" type="range" min="0.5" max="3" step="0.25" value="1" disabled><output id="zoom-value">1×</output></label>
+      </div>
+      <p id="transport-status" class="transport-status" role="status" aria-live="assertive" hidden></p>
+
+      <div id="workspace-empty" class="workspace-empty">
+        <div class="empty-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <h2>Здесь появится вокальная мелодия</h2>
+        <p>Загрузите песню и точный текст. Студия покажет фактический pitch, устойчивые ноты и все слова на одной шкале.</p>
+        <ul><li><span class="legend-note"></span> полоска: распознанная нота</li><li><span class="legend-pitch"></span> линия: высота голоса</li><li><b>≈</b>: приблизительная привязка</li></ul>
+      </div>
+
+      <div id="studio-result" class="studio-result" hidden>
+        <div id="result-banner" class="result-banner" role="status">
+          <span id="result-banner-text"></span>
+          <button id="result-recovery" type="button" hidden>Выбрать файлы заново</button>
+        </div>
+        <div class="timeline-header">
+          <div><h2 id="result-title">Вокальная партия</h2><p id="result-summary"></p></div>
+          <div id="downloads" class="downloads" aria-label="Скачать результаты"></div>
+        </div>
+        <section id="note-inspector" class="note-inspector" aria-label="Текущая нота и слово">
+          <div class="inspector-copy">
+            <span>Сейчас</span>
+            <strong id="inspector-note">Нет определимой ноты</strong>
+            <small id="inspector-detail">Переместите курсор или переходите между нотами.</small>
+          </div>
+          <div class="inspector-word">
+            <span>Слово</span>
+            <strong id="inspector-word">Нет слова</strong>
+            <small id="inspector-word-detail">Связь с нотой отсутствует.</small>
+          </div>
+          <div class="inspector-nav" aria-label="Переход между распознанными нотами">
+            <button id="previous-note" type="button" disabled aria-label="Предыдущая распознанная нота">Предыдущая</button>
+            <output id="inspector-position" aria-live="polite">0 / 0</output>
+            <button id="next-note" type="button" disabled aria-label="Следующая распознанная нота">Следующая</button>
+          </div>
+        </section>
+        <p id="timeline-semantic-summary" class="sr-only">График доступен через панель текущей ноты. Кнопки «Предыдущая» и «Следующая» последовательно открывают каждую распознанную ноту, включая короткие.</p>
+        <div id="timeline-scroller" class="timeline-scroller" tabindex="0" aria-label="Прокручиваемая шкала нот и слов">
+          <div id="timeline-spacer" class="timeline-spacer"><canvas id="timeline-canvas" tabindex="0" aria-label="График высоты, нот и слов" aria-describedby="timeline-semantic-summary note-inspector"></canvas></div>
+        </div>
+        <input id="canvas-seek" class="canvas-seek" type="range" min="0" max="1" step="0.001" value="0" aria-label="Перемотка временной шкалы">
+        <div class="overview-wrap"><span>Вся запись</span><canvas id="overview-canvas" aria-label="Обзор всей записи"></canvas></div>
+        <div id="timeline-message" class="timeline-message"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/studio.js" defer></script>
+</body>
+</html>

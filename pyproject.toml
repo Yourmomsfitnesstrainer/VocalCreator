@@ -16,6 +16,8 @@ dependencies = ["PyYAML>=6.0,<7"]
 ml = ["faster-whisper>=1.2,<2", "whisperx>=3.8.6,<4"]
 whisperx = ["whisperx>=3.8.6,<4"]
 separation = ["demucs>=4,<5"]
+studio = ["numpy>=1.26,<3", "torchcrepe>=0.0.24,<0.1"]
+studio-roformer = ["melband-roformer-infer>=0.1.5,<0.2"]
 web = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "python-multipart>=0.0.20,<1"]
 dev = ["pytest>=8,<10", "httpx>=0.28,<1"]
 
@@ -27,6 +29,9 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+karaoke_generator = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

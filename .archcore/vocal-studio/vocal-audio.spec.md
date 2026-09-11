@@ -13,11 +13,11 @@ tags:
 
 ## Surface
 
-Точки интеграции: @src/karaoke_generator/audio.py, @src/karaoke_generator/separation.py, @src/karaoke_generator/pipeline.py, @src/karaoke_generator/timing_cache.py, @src/karaoke_generator/web.py.
+Точки интеграции: @src/karaoke_generator/audio.py, @src/karaoke_generator/separation.py, @src/karaoke_generator/studio.py, @src/karaoke_generator/studio_web.py, @src/karaoke_generator/timing_cache.py, @src/karaoke_generator/web.py.
 
-Предлагаемые поля задания: тип входа `mix|vocal`, аудио, UTF-8 TXT, язык `auto|ru|en`. Тип `vocal` выбирает пользователь; приложение не объявляет такой файл проверенным чистым голосом.
+Поля задания: тип входа `mix|vocal`, аудио, необязательный UTF-8 TXT и язык `auto|ru|en`. Тип `vocal` выбирает пользователь; приложение не объявляет такой файл проверенным чистым голосом.
 
-Предлагаемые артефакты: `vocals.wav`, `instrumental.wav` для полного микса, существующий `alignment.json`, отдельный `melody.json`, `piano.wav`, `studio.json`, исходный TXT и отчёт его очистки. `studio.json` связывает версии, пути, длительность, статусы стадий и происхождение. Схема студии начинается с версии 1; это проектируемые имена, кода ещё нет.
+Артефакты: `vocals.wav`, `instrumental.wav` для полного микса, существующий `alignment.json`, отдельный `melody.json`, `piano.wav`, `studio.json`, исходный TXT и отчёт его очистки. `studio.json` связывает версии, пути, длительность, статусы стадий и происхождение. Схема студии имеет версию 1.
 При полном провале ASR поле `alignment.status` равно `unavailable`; TXT доступен без времён, фиктивный alignment JSON отсутствует. Имеющаяся валидная ручная разметка сохраняется.
 
 ## Normative Behavior
@@ -60,3 +60,9 @@ tags:
 ## Conformance
 
 Проверяются ложный успех separator, происхождение готового вокала, запрет path traversal, перезапуск, частичный результат, точная шкала и независимость кешей. Акустические метрики проверяются отдельно; файл с именем `vocals.wav` сам по себе не доказывает выполнение контракта.
+
+## Реализация и проверка
+
+Контракт реализован в @src/karaoke_generator/studio.py и @src/karaoke_generator/studio_web.py. Separator не имеет fallback на исходный mix; манифест сохраняется атомарно и содержит происхождение моделей, статусы стадий, длительности обработки и пиковую RSS для новых запусков.
+
+Полный браузерный прогон на предоставленном MP3 длительностью 303,726 секунды завершился со статусом `complete`: сохранены три WAV одинаковой длины, `melody.json`, `alignment.json` и `studio.json`. Корреляционная диагностика трёх участков подтвердила общую шкалу времени, но не оценивает качество отделения вокала. Музыкальная приёмка separator остаётся ручным незакрытым пунктом.

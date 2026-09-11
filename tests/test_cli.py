@@ -58,3 +58,30 @@ def test_main_render_with_explicit_config_and_offset(tmp_path, monkeypatch):
     cli.main(['--config', str(config), 'render', '--alignment', 'a.json', '--audio', 'a.mp3',
               '--output', 'a.mp4', '--timing-offset-ms', '75'])
     assert captured['karaoke']['timing_offset_ms'] == 75
+
+
+def test_studio_backend_switches_to_compatible_default_model(monkeypatch):
+    from karaoke_generator import cli
+
+    captured = {}
+
+    def run(*args, **kwargs):
+        captured.update(args[3])
+        return {"status": "complete", "artifacts": {}}
+
+    monkeypatch.setattr(cli, "run_studio", run)
+    cli.main(
+        [
+            "studio",
+            "--audio",
+            "song.wav",
+            "--lyrics",
+            "lyrics.txt",
+            "--output",
+            "result",
+            "--separator-backend",
+            "melband-roformer",
+        ]
+    )
+
+    assert captured["separation"]["model"] == "melband-roformer-kim-vocals"

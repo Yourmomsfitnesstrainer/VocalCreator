@@ -20,6 +20,14 @@ def test_silence_does_not_claim_timeline_verified():
     assert _compare_timeline(np.zeros(10000), np.zeros(10000))['status'] == 'inconclusive'
 
 
+def test_periodic_tone_does_not_create_a_false_timeline_mismatch():
+    time = np.arange(6000) / 2000
+    tone = np.sin(2 * np.pi * 440 * time)
+    report = _compare_timeline(tone, tone)
+    assert report['status'] == 'inconclusive'
+    assert all(item['unambiguous'] is False for item in report['observations'])
+
+
 def test_inconsistent_stem_sum_is_not_verified():
     signal = np.random.default_rng(45).normal(0, .2, 40000)
     wrong_sum = .7*signal + .3*np.r_[np.zeros(400), signal[:-400]]

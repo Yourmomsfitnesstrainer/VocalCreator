@@ -9,7 +9,9 @@ from pathlib import Path
 from .audio import ffmpeg_has_ass, find_ffmpeg
 from .config import load_config
 from .pipeline import generate, rerender
-from .separation import DemucsSeparator
+from .pitch import TorchCrepeAnalyzer
+from .separation import DemucsSeparator, MelBandRoformerSeparator
+from .studio import run_studio
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -35,6 +37,20 @@ def _parser() -> argparse.ArgumentParser:
     generate_parser.add_argument("--skip-separation", action="store_true")
     generate_parser.add_argument("--resolution", help="e.g. 1920x1080")
     generate_parser.add_argument("--background", help="procedural, solid, image, or video path")
+
+    studio_parser = subparsers.add_parser("studio", help="Analyze a vocal melody without rendering video")
+    studio_parser.add_argument("--audio", type=Path, required=True)
+    studio_parser.add_argument("--lyrics", type=Path, required=True)
+    studio_parser.add_argument("--output", type=Path, required=True)
+    studio_parser.add_argument("--input-type", choices=["mix", "vocal"], default="mix")
+    studio_parser.add_argument("--language")
+    studio_parser.add_argument("--backend", choices=["faster-whisper", "whisperx", "uniform"])
+    studio_parser.add_argument("--model")
+    studio_parser.add_argument("--pitch-backend", choices=["torchcrepe", "autocorrelation"], default=None)
+    studio_parser.add_argument("--pitch-device")
+    studio_parser.add_argument("--separator-backend", choices=["demucs", "melband-roformer"])
+    studio_parser.add_argument("--separator-model")
+    studio_parser.add_argument("--separator-device", help="Torch device for optional separators")
 
     render_parser = subparsers.add_parser("render", help="Render edited alignment.json without ML")
     render_parser.add_argument("--alignment", type=Path, required=True)
@@ -97,12 +113,22 @@ def _doctor() -> int:
         else "WhisperX: optional dependency missing"
     )
     print(f"Demucs: {'OK' if DemucsSeparator.available() else 'optional dependency missing'}")
+    print(
+        "torchcrepe: OK"
+        if TorchCrepeAnalyzer.available()
+        else "torchcrepe: optional studio dependency missing"
+    )
+    print(
+        "Mel-Band RoFormer: OK"
+        if MelBandRoformerSeparator.available()
+        else "Mel-Band RoFormer: optional comparison dependency missing"
+    )
     return 0
 
 
 def main(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
-    commands = {"generate", "render", "doctor", "web"}
+    commands = {"generate", "studio", "render", "doctor", "web"}
     if argv and not any(arg in commands for arg in argv) and "--audio" in argv:
         position = 2 if argv[0] == "--config" else 1 if argv[0].startswith("--config=") else 0
         argv.insert(position, "generate")
@@ -118,6 +144,37 @@ def main(argv: list[str] | None = None) -> None:
         print("\nCreated:")
         for name, path in artifacts.items():
             print(f"  {name}: {path}")
+        return
+    if args.command == "studio":
+        _apply_overrides(config, args)
+        if args.pitch_backend:
+            config["pitch"]["backend"] = args.pitch_backend
+        if args.pitch_device:
+            config["pitch"]["device"] = args.pitch_device
+        if args.separator_backend:
+            config["separation"]["backend"] = args.separator_backend
+            if not args.separator_model:
+                config["separation"]["model"] = (
+                    "htdemucs"
+                    if args.separator_backend == "demucs"
+                    else "melband-roformer-kim-vocals"
+                )
+        if args.separator_model:
+            config["separation"]["model"] = args.separator_model
+        if args.separator_device:
+            config["separation"]["device"] = args.separator_device
+        manifest = run_studio(
+            args.audio,
+            args.lyrics,
+            args.output,
+            config,
+            input_type=args.input_type,
+        )
+        print(f"Studio status: {manifest['status']}")
+        for name, relative in manifest["artifacts"].items():
+            print(f"  {name}: {args.output / relative}")
+        if manifest["status"] == "failed":
+            raise SystemExit(1)
         return
     if args.command == "render":
         _apply_overrides(config, args)

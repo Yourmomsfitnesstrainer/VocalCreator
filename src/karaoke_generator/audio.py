@@ -169,9 +169,17 @@ def _compare_timeline(reference, candidate) -> dict:
         variance = np.maximum(0., squares[size:]-squares[:-size]-(sums[size:]-sums[:-size])**2/size)
         correlations = dots / np.sqrt(np.maximum(energy*variance, 1e-30))
         peak = int(np.argmax(correlations))
+        # A periodic calibration tone can have several equally plausible lags.
+        # Such a peak cannot prove a shift and must stay inconclusive.
+        alternatives = correlations.copy()
+        alternatives[max(0, peak-8):min(len(alternatives), peak+9)] = -1
+        second = float(np.max(alternatives)) if len(alternatives) > 17 else -1.
+        margin = float(correlations[peak]) - second
         observations.append({'at_seconds': at/rate, 'lag_ms': (lo+peak-at)*1000/rate,
-                             'correlation': round(float(correlations[peak]), 6)})
-    confident = [item for item in observations if item['correlation'] >= .7]
+                             'correlation': round(float(correlations[peak]), 6),
+                             'peak_margin': round(margin, 6),
+                             'unambiguous': margin >= .02})
+    confident = [item for item in observations if item['correlation'] >= .7 and item['unambiguous']]
     status = ('mismatch' if abs(length_error) > .04 or any(abs(item['lag_ms']) > 10 for item in confident)
               else 'verified' if len(confident) >= 2 and all(x['correlation'] >= .98 for x in observations) else 'inconclusive')
     return {'status': status, 'length_delta_seconds': length_error, 'observations': observations,

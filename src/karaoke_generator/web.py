@@ -9,12 +9,17 @@ from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import load_config
 from .pipeline import generate
+from .studio_web import router as studio_router
 
 
-app = FastAPI(title="Karaoke Creator", version="0.1.0")
+app = FastAPI(title="VocalCreator", version="0.2.0")
+STATIC_ROOT = Path(__file__).with_name("static")
+app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
+app.include_router(studio_router)
 JOBS_ROOT = Path(tempfile.gettempdir()) / "karaoke-creator-jobs"
 JOBS_ROOT.mkdir(parents=True, exist_ok=True)
 JOBS: dict[str, dict[str, Any]] = {}
@@ -143,9 +148,14 @@ form.addEventListener('submit',async event=>{
 </script></body></html>"""
 
 
+@app.get("/karaoke", response_class=HTMLResponse)
+def karaoke_index() -> str:
+    return FORM
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return FORM
+    return (STATIC_ROOT / "studio.html").read_text(encoding="utf-8")
 
 
 def _set_job(job_id: str, **changes: Any) -> None:

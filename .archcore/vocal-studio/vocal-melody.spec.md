@@ -13,7 +13,7 @@ tags:
 
 ## Surface
 
-Существующие интеграции: @src/karaoke_generator/alignment.py и @src/karaoke_generator/models.py. Отдельного модуля pitch/notes сейчас нет; его путь будет определён при реализации.
+Интеграции: @src/karaoke_generator/alignment.py, @src/karaoke_generator/models.py, @src/karaoke_generator/pitch.py, @src/karaoke_generator/melody.py, @src/karaoke_generator/piano.py и @src/karaoke_generator/studio_models.py.
 
 Предлагаемый `melody.json` v1: `timeline`, `pitch_frames`, `notes`, `word_note_links`, `diagnostics`, `provenance`.
 Кадр содержит абсолютное время, F0 в Hz или null, voiced и сырой score модели.
@@ -62,3 +62,9 @@ tags:
 ## Conformance
 
 Проверки используют распев слова, повтор одной ноты, вибрато, плавный переход, паузу, невокальные согласные, повторяющиеся припевы, несовпадающий TXT и ручную правку границ. Синтетические fixtures проверяют контракт; реальное пение проверяет акустический протокол из плана.
+
+## Реализация и проверка
+
+Схема `melody.json` v1, TorchCrepe analyzer, диагностический autocorrelation backend, сегментация нот, все пересечения «слово ↔ нота» и локальный piano renderer реализованы в указанных модулях. Синтетические тесты проверяют паузы, устойчивые ноты, повторные атаки и связи со словами; fault probes доказали чувствительность oracle к удалению второй связи.
+
+В полном прогоне сохранены 30 373 pitch-кадра, 687 нот и 717 связей для 305 слов. Эти числа доказывают выполнение pipeline и целостность схемы, но не являются метрикой акустической точности; проверка реальным прослушиванием остаётся открытой.
