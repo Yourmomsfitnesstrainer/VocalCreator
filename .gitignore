@@ -16,3 +16,12 @@ demo/*.wav
 demo/*.mp3
 demo/*.aiff
 models/
+
+# The registered example is committed; generated or unrelated files stay local.
+!references/seekae-test-and-recognise/
+references/seekae-test-and-recognise/*
+!references/seekae-test-and-recognise/audio.mp3
+!references/seekae-test-and-recognise/lyrics-source.rtf
+!references/seekae-test-and-recognise/lyrics.txt
+!references/seekae-test-and-recognise/manifest.json
+!references/seekae-test-and-recognise/README.md

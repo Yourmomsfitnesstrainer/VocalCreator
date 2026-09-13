@@ -281,6 +281,11 @@
       "source": "onboarding/running-the-project.guide.md",
       "target": "conventions/reference-song-acceptance.rule.md",
       "type": "related"
+    },
+    {
+      "source": "vocal-studio/vocal-studio-implementation.plan.md",
+      "target": "conventions/reference-song-acceptance.rule.md",
+      "type": "related"
     }
   ]
 }

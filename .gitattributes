@@ -1,0 +1,4 @@
+# Preserve the registered source files byte-for-byte on every checkout.
+references/seekae-test-and-recognise/audio.mp3 binary
+references/seekae-test-and-recognise/lyrics-source.rtf binary
+references/seekae-test-and-recognise/lyrics.txt -text

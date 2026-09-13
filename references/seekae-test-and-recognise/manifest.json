@@ -1,0 +1,22 @@
+{
+  "id": "seekae-test-and-recognise-flume-rework",
+  "title": "Seekae — Test & Recognise (Flume Re-Work)",
+  "language": "en",
+  "source": "User-provided audio and lyrics",
+  "committed_by_user_request": "2026-09-13",
+  "canonical_word_count": 305,
+  "files": {
+    "audio.mp3": {
+      "sha256": "01525055fe716f694b96f2f3997edecfd1c6f84331c282f07898195cbda5f93c",
+      "bytes": 12151162
+    },
+    "lyrics-source.rtf": {
+      "sha256": "e493cc1a2361da30d59974d4d1c0e29940c473914b247f184e0d079b45287dbd",
+      "bytes": 2767
+    },
+    "lyrics.txt": {
+      "sha256": "28424da287ccd160aa0cfce4ff804407b438128c57e6890ddfe30214c144b749",
+      "bytes": 1513
+    }
+  }
+}

@@ -1,6 +1,6 @@
 """Exercise the user's fixed local song through a running VocalCreator API.
 
-The report and converted lyrics stay in ignored output/. Browser playback and
+The registered inputs live in references/; reports stay in ignored output/. Browser playback and
 listening are separate required steps; a successful API run does not assert them.
 """
 from __future__ import annotations
@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import subprocess
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,9 +15,12 @@ from urllib.parse import urlparse
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-AUDIO = Path.home() / "Downloads/SEEKAE_-_TEST_AND_RECOGNISE_X_FLUME_RE_-_WORK_(mp3.pm).mp3"
-LYRICS_RTF = Path.home() / "Downloads/ Seekae - Test & Recognise (Flume Re-Work)Lyric.rtf"
+REFERENCE = ROOT / "references/seekae-test-and-recognise"
+AUDIO = REFERENCE / "audio.mp3"
+LYRICS_RTF = REFERENCE / "lyrics-source.rtf"
+LYRICS_TXT = REFERENCE / "lyrics.txt"
 EXPECTED_AUDIO = "01525055fe716f694b96f2f3997edecfd1c6f84331c282f07898195cbda5f93c"
+EXPECTED_LYRICS_RTF = "e493cc1a2361da30d59974d4d1c0e29940c473914b247f184e0d079b45287dbd"
 EXPECTED_LYRICS = "28424da287ccd160aa0cfce4ff804407b438128c57e6890ddfe30214c144b749"
 
 
@@ -28,14 +30,19 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "output/reference-check")
     parser.add_argument("--reanalyze", action="store_true", help="Run a new full analysis when an upstream analysis stage changed")
     parser.add_argument("--rates", default="0.5,1", help="Comma-separated playback rates to prepare")
+    parser.add_argument("--check-files-only", action="store_true", help="Verify committed inputs without a server or analysis")
     args = parser.parse_args()
     if urlparse(args.url).hostname not in {"127.0.0.1", "localhost", "::1"}:
         parser.error("Reference audio and lyrics may only be sent to loopback")
     audio_hash = hashlib.sha256(AUDIO.read_bytes()).hexdigest()
-    lyrics = subprocess.check_output(["textutil", "-convert", "txt", "-stdout", str(LYRICS_RTF)])
+    rtf_hash = hashlib.sha256(LYRICS_RTF.read_bytes()).hexdigest()
+    lyrics = LYRICS_TXT.read_bytes()
     lyrics_hash = hashlib.sha256(lyrics).hexdigest()
-    if (audio_hash, lyrics_hash) != (EXPECTED_AUDIO, EXPECTED_LYRICS):
+    if (audio_hash, rtf_hash, lyrics_hash) != (EXPECTED_AUDIO, EXPECTED_LYRICS_RTF, EXPECTED_LYRICS):
         raise SystemExit("Reference files changed: inspect them before replacing the fixed fixture")
+    if args.check_files_only:
+        print("Reference MP3, original RTF and canonical TXT: SHA-256 verified")
+        return
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "reference-lyrics.txt").write_bytes(lyrics)
     report = {"audio_sha256": audio_hash, "lyrics_sha256": lyrics_hash, "modes": {}, "rates": {},

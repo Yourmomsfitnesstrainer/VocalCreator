@@ -5,6 +5,7 @@ tags:
   - "onboarding"
 ---
 
+
 Читатель и исполнитель — владелец локальной демки 0.1; задача — запустить студию и повторно открыть проверенную песню.
 
 ## Prerequisites
@@ -45,11 +46,13 @@ PYTHONPATH=src .venv/bin/python -m karaoke_generator.cli web --host 127.0.0.1 --
 
 ## Verification
 
-`PYTHONPATH=src .venv/bin/python scripts/check_reference_song.py --url http://127.0.0.1:8080` сверяет фиксированные MP3/RTF, ждёт завершения анализа при отсутствии готового задания, проверяет 305 слов и готовит три режима, 0.5× и 1×. При изменении исходного анализа применяется `--reanalyze`; смена номера версии его не требует.
+`PYTHONPATH=src .venv/bin/python scripts/check_reference_song.py --check-files-only` проверяет целостность включённых в Git файлов без сервера и моделей. Downloads и textutil для этого прогона не нужны; UTF-8 TXT уже сохранён рядом с исходным RTF.
+
+`PYTHONPATH=src .venv/bin/python scripts/check_reference_song.py --url http://127.0.0.1:8080` сверяет MP3, оригинальный RTF и готовый TXT из @references/seekae-test-and-recognise/, ждёт завершения анализа при отсутствии готового задания, проверяет 305 слов и готовит три режима, 0.5× и 1×. При изменении исходного анализа применяется `--reanalyze`; смена номера версии его не требует.
 
 Для отдельной браузерной проверки запустите `PYTHONPATH=src .venv/bin/python scripts/check_studio_browser.py --port 8082 --output output/browser-qa --data-dir output/browser-qa/data`. Откройте `http://127.0.0.1:8082/__checks`; кнопка запуска сохраняет измерения в browser-report.json. Затем откройте песню в новой вкладке и проверьте воспроизведение.
 
-Текущий проверенный локальный показ использует `output/v3-qa/data` на порту 8082; исходная библиотека остаётся отдельной. Локальные аудио, текст, кеши и отчёты output исключены из Git.
+Последний проверенный локальный показ использовал `output/v3-qa/data` на порту 8082; исходная библиотека остаётся отдельной. Исходные файлы Seekae разрешены пользователем к хранению в Git; остальные аудио, текст, кеши и отчёты output остаются локальными. Расширение набора до трёх английских и трёх русских песен записано в @docs/backlog.md.
 
 ## Common Issues
 
