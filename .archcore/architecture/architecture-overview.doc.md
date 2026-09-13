@@ -8,17 +8,33 @@ tags:
 
 ## Overview
 
-Python; FFmpeg/libass + faster-whisper + WhisperX; pytest
+VocalCreator — локальная десктопная вокальная студия, рабочая демка 0.1. Принятая основа: `bfd2665` от 13 сентября 2026 года; прежняя маркировка 0.3 заменена без изменения анализа. Прежний Karaoke MP4 остаётся отдельным режимом.
 
-| Area | Type | Covers |
+## Content
+
+### Потоки данных
+
+| Поток | Реализация | Результат |
 |---|---|---|
-| Stack | rule | язык, media/alignment stack, тестовый runner |
-| Running locally | guide | установка, локальный запуск, smoke test |
-| Entry points | doc | CLI и HTTP |
-| Public surface | doc | каталог команд |
-| Hotspot: alignment | spec | mapping точного текста на временную сетку |
-| Hotspot: audio | spec | FFmpeg discovery и подготовка WAV |
-| Hotspot: pipeline | spec | стадии, cache и artifacts |
-| Hotspot: CLI | spec | аргументы, overrides и dispatch |
+| Студия | @src/karaoke_generator/studio.py | separation → alignment → F0 → ноты → пианино, без обязательного MP4 |
+| Точный текст | @src/karaoke_generator/syllables.py, @src/karaoke_generator/lyric_recovery.py | Все канонические вхождения, CTC-границы, восстановление повторов и provenance |
+| Связи текста и нот | @src/karaoke_generator/learning_v3.py, @src/karaoke_generator/v3_storage.py | Части слов, продолжения, приблизительные и контекстные подписи |
+| Изменение скорости | @src/karaoke_generator/tempo.py | Совместный offline Rubber Band R3 для всех дорожек, неизменная высота |
+| Десктопный плеер | @src/karaoke_generator/static/studio.js | Общий Web Audio clock, три gain/mute, две оси шкалы, полная лирика |
+| Karaoke | @src/karaoke_generator/pipeline.py, @src/karaoke_generator/subtitles.py | Точный TXT → alignment → ASS → MP4 |
 
-Перенос JSON → ASS → MP4 использует абсолютные границы в @src/karaoke_generator/subtitles.py. Происхождение таймингов хранится в schema 3. Раздельные ASR/refinement-кеши находятся в @src/karaoke_generator/timing_cache.py; метрики акустической приёмки — в @src/karaoke_generator/evaluation.py. Проверка синтетического рендера не доказывает акустическую точность на песнях.
+Высота и расписание нот вычисляются независимо от количества слов. Текст связывается с нотами, не создавая новые атаки пианино. Light/Medium/Pro пока используют одинаковые стабильные события; различия требуют независимой калибровки.
+
+### Состояние и хранение
+
+@src/karaoke_generator/studio_web.py ведёт задания `queued/running/complete/partial/failed/interrupted`. Манифест `jobs/{id}/result/studio.json` восстанавливает библиотеку после перезапуска. Папка по умолчанию — `~/Library/Application Support/VocalCreator`; переменная `VOCAL_CREATOR_DATA_DIR` задаёт базу, к которой добавляется `jobs`.
+
+Исходные артефакты отделены от `learning`, `learning-v3`, `lyric-recovery-v3` и `tempo-v3`. Ключи учитывают входы, алгоритмы и параметры; публикация производных происходит после завершения комплекта. Эти имена — версии схем и кешей, не номер приложения.
+
+### Границы демки
+
+Обработка локальная; установка зависимостей и весов требует загрузок. Демка не содержит аккаунтов, облака, мобильной версии и автоматической очистки библиотеки. Принятый пример — 305 слов и 771 нота; 130 подписей помечены контекстом, 9 слов не имеют ноты. Независимая музыкальная оценка остаётся незавершённой.
+
+## Examples
+
+`karaoke-gen web --host 127.0.0.1 --port 8080` открывает студию в `/`, а Karaoke — в `/karaoke`. Постоянная пара проверяется @scripts/check_reference_song.py; последний полный отчёт — @docs/vocal-studio-text-repair-verification.md.

@@ -5,45 +5,57 @@ tags:
   - "onboarding"
 ---
 
+Читатель и исполнитель — владелец локальной демки 0.1; задача — запустить студию и повторно открыть проверенную песню.
+
 ## Prerequisites
 
-- macOS или Linux с Python 3.10+.
-- FFmpeg с поддержкой libass.
-- Для тяжёлых ML-режимов нужны локальное место для весов и достаточно памяти.
+Python 3.10–3.13, FFmpeg с libass, локальное место для весов. На проверенном Mac используется Python 3.12. Для изменения темпа требуется Rubber Band 3+; без него доступно обычное воспроизведение.
 
 ## Steps
 
-1. Установить FFmpeg и создать окружение:
+1. Откройте терминал в корне репозитория.
+2. Установите системные зависимости на macOS:
 
 ```sh
-brew install ffmpeg-full
+brew install ffmpeg-full rubberband
+```
+
+3. Создайте окружение:
+
+```sh
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[ml,web,dev,separation,studio]'
 ```
 
-2. Запустить локальный сервис:
+4. Установите зависимости:
 
 ```sh
-karaoke-gen web --port 8080
+.venv/bin/python -m pip install -e '.[ml,web,dev,separation,studio]'
 ```
 
-3. Открыть `http://127.0.0.1:8080/` для вокальной студии. Прежний интерфейс Karaoke MP4 доступен по `/karaoke`.
+5. Запустите локальную студию:
 
-Постоянные задания хранятся в `~/Library/Application Support/VocalCreator/jobs`; базовый каталог можно изменить через `VOCAL_CREATOR_DATA_DIR`.
+```sh
+PYTHONPATH=src .venv/bin/python -m karaoke_generator.cli web --host 127.0.0.1 --port 8080
+```
+
+6. Откройте `http://127.0.0.1:8080/` в настольном браузере.
+7. Выберите результат библиотеки либо загрузите аудио и точный UTF-8 TXT.
+
+Задания сохраняются в `~/Library/Application Support/VocalCreator/jobs`. `VOCAL_CREATOR_DATA_DIR` меняет базовый каталог, приложение добавляет `jobs`. Другой каталог означает другую библиотеку. Исходный RTF преобразуется в TXT через `textutil -convert txt`.
 
 ## Verification
 
-1. Проверить окружение:
+`PYTHONPATH=src .venv/bin/python scripts/check_reference_song.py --url http://127.0.0.1:8080` сверяет фиксированные MP3/RTF, ждёт завершения анализа при отсутствии готового задания, проверяет 305 слов и готовит три режима, 0.5× и 1×. При изменении исходного анализа применяется `--reanalyze`; смена номера версии его не требует.
 
-```sh
-karaoke-gen doctor
-```
+Для отдельной браузерной проверки запустите `PYTHONPATH=src .venv/bin/python scripts/check_studio_browser.py --port 8082 --output output/browser-qa --data-dir output/browser-qa/data`. Откройте `http://127.0.0.1:8082/__checks`; кнопка запуска сохраняет измерения в browser-report.json. Затем откройте песню в новой вкладке и проверьте воспроизведение.
 
-2. Запустить короткий smoke test:
+Текущий проверенный локальный показ использует `output/v3-qa/data` на порту 8082; исходная библиотека остаётся отдельной. Локальные аудио, текст, кеши и отчёты output исключены из Git.
 
-```sh
-./scripts/make_demo.sh
-```
+## Common Issues
 
-3. Для студии загрузить короткий аудиофайл и убедиться, что библиотека показывает сохранённый результат после перезагрузки страницы.
+- Пустая библиотека: проверьте `VOCAL_CREATOR_DATA_DIR` и соответствующий jobs/result/studio.json.
+- Порт занят: выберите другой порт; два процесса не запускаются на одном адресе.
+- Темп недоступен: проверьте `rubberband --version`; `KARAOKE_RUBBERBAND` задаёт путь к бинарнику.
+- Прерывание анализа: после перезапуска незавершённый manifest получает interrupted; сохранённые дорожки остаются.
+- Долгая первая обработка: отсутствуют локальные веса или кеш. Установка зависимостей не подтверждает готовность моделей.
+- MPS для Mel-Band RoFormer: на проверенной связке complex scatter не поддерживается, применяется CPU.

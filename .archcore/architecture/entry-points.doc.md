@@ -8,25 +8,25 @@ tags:
 
 
 ## Overview
-Проект имеет два локальных входа: CLI и HTTP-интерфейс; каждый сохраняет режимы студии и Karaoke MP4.
+
+Демка 0.1 имеет CLI и локальный HTTP-вход. Основная страница — десктопная студия; прежний Karaoke MP4 сохраняет собственный маршрут.
 
 ## Content
-### CLI
-- `karaoke-gen` — console script из `@pyproject.toml`; диспетчер в `@src/karaoke_generator/cli.py`.
 
-### HTTP
-- `GET /` — вокальная студия с библиотекой, микшером и общей временной шкалой.
-- `GET /karaoke` — прежняя форма Karaoke MP4.
-- `POST /api/studio/jobs` — принимает audio + UTF-8 TXT, валидирует их и создаёт постоянное фоновое задание.
-- `GET /api/studio/jobs` — перечисляет сохранённые результаты после перезапуска.
-- `GET /api/studio/jobs/{job_id}` — возвращает стадии, частичное состояние и allowlisted ссылки.
-- `GET /api/studio/jobs/{job_id}/artifacts/{filename}` — отдаёт разрешённый studio artifact.
-- `POST /api/jobs` — прежняя форма загрузки и индикатор выполнения.
-- `POST /api/jobs` — создаёт фоновую генерацию и возвращает URL статуса.
-- `GET /api/jobs/{job_id}` — возвращает состояние, процент, стадию, ошибку или ссылки.
-- `POST /generate` — синхронный fallback для клиента без JavaScript.
-- `GET /jobs/{job_id}/{filename}` — отдаёт разрешённый итоговый артефакт.
-- Реализация HTTP-поверхности находится в `@src/karaoke_generator/web.py`.
+| Вход | Файл | Назначение |
+|---|---|---|
+| `karaoke-gen` | @pyproject.toml, @src/karaoke_generator/cli.py | Команды `generate/studio/render/doctor/web` |
+| `GET /` | @src/karaoke_generator/web.py | @src/karaoke_generator/static/studio.html, studio.css, studio.js |
+| `GET /karaoke` | @src/karaoke_generator/web.py | Прежняя форма Karaoke MP4 |
+| `/api/studio` | @src/karaoke_generator/studio_web.py | Библиотека, анализ, исходные и производные артефакты |
+| `/api/jobs`, `/generate` | @src/karaoke_generator/web.py | Фоновые задания и синхронный fallback Karaoke |
+| Браузерные проверки | @scripts/check_studio_browser.py, @tests/browser_checks.js | Изолированная страница `/__checks` и локальный отчёт |
+| Постоянная песня | @scripts/check_reference_song.py | MP3/RTF, все 305 слов, три режима и темп через работающий API |
+
+`/__checks` существует только в проверочном runner, обычный `karaoke-gen web` его не добавляет. Источник версии OpenAPI — `__version__` в @src/karaoke_generator/__init__.py; версия пакета задаётся @pyproject.toml.
+
+Запуск `python -m karaoke_generator` проходит через @src/karaoke_generator/__main__.py к тому же CLI-диспетчеру.
 
 ## Examples
-Локальный Web-вход запускается командой `karaoke-gen web --port 8080`.
+
+Обычный запуск: `karaoke-gen web --host 127.0.0.1 --port 8080`. Сохранённый результат открывается через `/?job={id}&t=104.5&zoom=8&height=3`; параметры задают задание, секунды оригинала и масштабы.

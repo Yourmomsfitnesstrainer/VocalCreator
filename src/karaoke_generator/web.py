@@ -12,12 +12,13 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadF
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import __version__
 from .config import load_config
 from .pipeline import generate
 from .studio_web import router as studio_router
 
 
-app = FastAPI(title="VocalCreator", version="0.2.0")
+app = FastAPI(title="VocalCreator", version=__version__)
 STATIC_ROOT = Path(__file__).with_name("static")
 app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
 app.include_router(studio_router)

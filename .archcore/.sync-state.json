@@ -226,6 +226,61 @@
       "source": "conventions/reference-song-acceptance.rule.md",
       "target": "vocal-studio/vocal-studio.prd.md",
       "type": "related"
+    },
+    {
+      "source": "vocal-studio/working-demo-baseline.adr.md",
+      "target": "vocal-studio/vocal-studio.prd.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/working-demo-baseline.adr.md",
+      "target": "vocal-studio/vocal-parts-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/working-demo-baseline.adr.md",
+      "target": "vocal-studio/vocal-playback-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/working-demo-baseline.adr.md",
+      "target": "vocal-studio/vocal-studio-implementation.plan.md",
+      "type": "related"
+    },
+    {
+      "source": "architecture/architecture-overview.doc.md",
+      "target": "vocal-studio/working-demo-baseline.adr.md",
+      "type": "related"
+    },
+    {
+      "source": "architecture/architecture-overview.doc.md",
+      "target": "vocal-studio/vocal-audio.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "architecture/architecture-overview.doc.md",
+      "target": "vocal-studio/vocal-parts-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "architecture/architecture-overview.doc.md",
+      "target": "vocal-studio/vocal-playback-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "architecture/public-surface.doc.md",
+      "target": "vocal-studio/vocal-parts-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "architecture/public-surface.doc.md",
+      "target": "vocal-studio/vocal-playback-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "onboarding/running-the-project.guide.md",
+      "target": "conventions/reference-song-acceptance.rule.md",
+      "type": "related"
     }
   ]
 }
