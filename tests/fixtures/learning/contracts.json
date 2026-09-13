@@ -1,0 +1,16 @@
+{
+  "description": "Authored synthetic contracts from TZ v2 before implementation; not manual labels of real singing. Holdout parameters must not be tuned to observed output.",
+  "calibration": [
+    {"id": "four_notes", "events": [[0, 0.1, 60], [0.1, 0.25, 62], [0.25, 0.85, 64], [0.85, 1, 65]], "pro_count": 4, "light_pitch": 64},
+    {"id": "vibrato", "duration": 1, "center": 69, "amplitude": 0.7, "frequency": 5, "pro_count": 1},
+    {"id": "internal_pause", "events": [[0, 0.3, 60], [0.6, 1, 64]], "gap": [0.3, 0.6], "pro_count": 2}
+  ],
+  "holdout": [
+    {"id": "fast_melisma", "events": [[0, 0.09, 67], [0.09, 0.18, 69], [0.18, 0.27, 71], [0.27, 0.36, 72]], "pro_count": 4},
+    {"id": "same_pitch_attack", "events": [[0, 0.35, 69], [0.35, 0.7, 69]], "attack_times": [0.35], "pro_count": 2},
+    {"id": "short_word", "events": [[0, 0.1, 62]], "word": [0.03, 0.08], "pro_count": 1},
+    {"id": "long_word", "events": [[0, 0.8, 60], [0.8, 1.6, 62], [1.6, 2.4, 64], [2.4, 3.2, 62], [3.2, 4, 60]], "pro_count": 5},
+    {"id": "portamento", "duration": 1, "start_pitch": 60, "end_pitch": 67, "ramp": [0.3, 0.7], "pro_count": 2},
+    {"id": "approximate_alignment", "events": [[0, 0.5, 60], [7.5, 8, 72]], "word": [0, 8], "timing_source": "interpolated", "learning_count": 0}
+  ]
+}

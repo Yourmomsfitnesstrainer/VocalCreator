@@ -36,6 +36,44 @@ class WordNoteLink:
     status: str
 
 
+@dataclass(frozen=True)
+class LearningInterval:
+    start: float
+    end: float
+    source_note_ids: list[str]
+
+
+@dataclass(frozen=True)
+class LearningNote:
+    """One exercise step; separated intervals do not count as extra steps."""
+
+    id: str
+    start: float
+    end: float
+    midi: int
+    cents: float
+    confidence: float
+    source: str
+    uncertain: bool
+    intervals: list[LearningInterval]
+    source_note_ids: list[str]
+
+
+@dataclass
+class LearningResult:
+    mode: str
+    timeline: dict[str, Any]
+    notes: list[LearningNote]
+    words: list[dict[str, Any]]
+    word_note_links: list[WordNoteLink]
+    diagnostics: dict[str, Any]
+    provenance: dict[str, Any]
+    schema_version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass
 class MelodyResult:
     timeline: dict[str, Any]
@@ -62,6 +100,8 @@ class MelodyResult:
         links = [WordNoteLink(**raw) for raw in data.get("word_note_links", [])]
         for frame in frames:
             _bounded_interval(frame.time, frame.time, duration, "pitch frame", allow_empty=True)
+            _finite_number(frame.periodicity, "pitch frame periodicity")
+            _finite_number(frame.raw_score, "pitch frame raw_score")
             if frame.hz is not None and (not math.isfinite(frame.hz) or frame.hz <= 0):
                 raise ValueError("pitch frame hz must be positive or null")
             if frame.midi is not None and not math.isfinite(frame.midi):
@@ -69,6 +109,8 @@ class MelodyResult:
         note_ids = set()
         for note in notes:
             _bounded_interval(note.start, note.end, duration, f"note {note.id}")
+            _finite_number(note.confidence, f"note {note.id} confidence")
+            _finite_number(note.cents, f"note {note.id} cents")
             if note.id in note_ids:
                 raise ValueError(f"duplicate note id: {note.id}")
             if not 0 <= note.midi <= 127:

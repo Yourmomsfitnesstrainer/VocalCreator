@@ -4,17 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>VocalCreator Studio</title>
+  <title>VocalCreator Studio 0.3</title>
   <link rel="stylesheet" href="/static/studio.css">
 </head>
 <body>
   <a class="skip-link" href="#main-workspace">Перейти к временной шкале</a>
   <svg class="icon-sprite" aria-hidden="true">
     <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
-    <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M7 5v14M17 5v14"/></symbol>
+    <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></symbol>
     <symbol id="icon-volume" viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19V5Zm4 4c1.4 1.5 1.4 4.5 0 6m3-9c3.4 3.2 3.4 8.8 0 12"/></symbol>
     <symbol id="icon-muted" viewBox="0 0 24 24"><path d="M11 5 6.5 9H3v6h3.5L11 19V5Zm4.5 5 5 5m0-5-5 5"/></symbol>
-    <symbol id="icon-loop" viewBox="0 0 24 24"><path d="m17 2 4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4m14-1v2a3 3 0 0 1-3 3H3"/></symbol>
     <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 16V3m0 0L7 8m5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
     <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v13m0 0 5-5m-5 5-5-5M4 19v2h16v-2"/></symbol>
     <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 6.5h6l2 2h10v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6.5Z"/></symbol>
@@ -24,7 +23,7 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="VocalCreator Studio, главная">
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-      <span>VocalCreator <strong>Studio</strong></span>
+      <span>VocalCreator <strong>Studio</strong> <small class="version-label">0.3</small></span>
     </a>
     <nav aria-label="Режимы приложения">
       <a class="nav-link active" href="/" aria-current="page">Студия</a>
@@ -92,7 +91,7 @@
       </section>
 
       <section id="mixer-section" class="sidebar-section mixer-section" hidden>
-        <div class="section-heading"><div><h2>Микшер</h2><p>Общий clock, независимая громкость.</p></div></div>
+        <div class="section-heading"><div><h2>Микшер</h2><p>Дорожки звучат синхронно.</p></div></div>
         <div id="track-controls"></div>
       </section>
 
@@ -104,19 +103,15 @@
 
     <section id="main-workspace" class="workspace" aria-label="Вокальная временная шкала">
       <div class="transport" aria-label="Управление воспроизведением">
-        <button id="play-button" class="play-button" type="button" aria-label="Воспроизвести" disabled><svg><use href="#icon-play"/></svg></button>
+        <button id="play-button" class="play-button" type="button" aria-label="Воспроизвести" title="Воспроизвести" disabled><svg aria-hidden="true" viewBox="0 0 24 24"><use href="#icon-play"/></svg></button>
         <output id="time-current" class="time-readout">0:00.000</output>
         <span class="time-separator">/</span>
         <output id="time-total" class="time-readout secondary">0:00.000</output>
         <label class="seek-control"><span class="sr-only">Позиция воспроизведения</span><input id="seek-slider" type="range" min="0" max="1" step="0.001" value="0" disabled></label>
-        <div class="transport-group ab-controls">
-          <button id="set-a" type="button" disabled>A <span id="a-value">·</span></button>
-          <button id="set-b" type="button" disabled>B <span id="b-value">·</span></button>
-          <button id="loop-button" class="icon-button" type="button" aria-label="Повторять фрагмент A–B" aria-pressed="false" disabled><svg><use href="#icon-loop"/></svg></button>
-          <button id="clear-loop" type="button" disabled>Сбросить</button>
-        </div>
-        <label class="zoom-control" for="zoom-slider"><span>Масштаб</span><input id="zoom-slider" type="range" min="0.5" max="3" step="0.25" value="1" disabled><output id="zoom-value">1×</output></label>
+        <label class="speed-control" for="speed-select"><span>Скорость</span><select id="speed-select" disabled aria-describedby="speed-status"><option value="0.25">0,25×</option><option value="0.5">0,5×</option><option value="0.75">0,75×</option><option value="1" selected>1×</option><option value="1.25">1,25×</option><option value="1.5">1,5×</option><option value="1.75">1,75×</option><option value="2">2×</option></select></label>
+        <label class="zoom-control" for="zoom-slider"><span>По времени</span><input id="zoom-slider" type="range" min="0.5" max="32" step="0.25" value="1" disabled><output id="zoom-value">1×</output></label>
       </div>
+      <p id="speed-status" class="transport-status info" role="status" aria-live="polite" hidden></p>
       <p id="transport-status" class="transport-status" role="status" aria-live="assertive" hidden></p>
 
       <div id="workspace-empty" class="workspace-empty">
@@ -135,6 +130,21 @@
           <div><h2 id="result-title">Вокальная партия</h2><p id="result-summary"></p></div>
           <div id="downloads" class="downloads" aria-label="Скачать результаты"></div>
         </div>
+        <div class="learning-controls">
+          <fieldset class="learning-modes" aria-describedby="learning-explanation learning-status">
+            <legend>Подробность мелодии</legend>
+            <label><input type="radio" name="learning-mode" value="light"><span>Light</span></label>
+            <label><input type="radio" name="learning-mode" value="medium"><span>Medium</span></label>
+            <label><input type="radio" name="learning-mode" value="pro"><span>Pro</span></label>
+          </fieldset>
+          <div class="learning-copy">
+            <strong id="active-mode">Исходный разбор</strong>
+            <p id="learning-explanation">Подготовка учебных режимов из сохранённых данных.</p>
+            <p id="learning-status" role="status" aria-live="polite" hidden></p>
+          </div>
+        </div>
+        <div id="v3-preparation" class="v3-preparation"><p>Исходные ноты и полный текст уже доступны. Подготовьте части слов для разучивания.</p><button id="prepare-v3" type="button">Подготовить части слов</button></div>
+        <div class="scale-controls"><label class="zoom-control" for="height-slider"><span>Высота нот</span><input id="height-slider" type="range" min="1" max="6" step="0.25" value="1" disabled><output id="height-value">1×</output></label><p>Колесо: по высоте · Shift + колесо: по времени · PageUp / PageDown: прокрутка</p></div>
         <section id="note-inspector" class="note-inspector" aria-label="Текущая нота и слово">
           <div class="inspector-copy">
             <span>Сейчас</span>
@@ -146,10 +156,10 @@
             <strong id="inspector-word">Нет слова</strong>
             <small id="inspector-word-detail">Связь с нотой отсутствует.</small>
           </div>
-          <div class="inspector-nav" aria-label="Переход между распознанными нотами">
-            <button id="previous-note" type="button" disabled aria-label="Предыдущая распознанная нота">Предыдущая</button>
+          <div class="inspector-nav" aria-label="Переход между нотами выбранного режима">
+            <button id="previous-note" type="button" disabled aria-label="Предыдущая нота">Предыдущая</button>
             <output id="inspector-position" aria-live="polite">0 / 0</output>
-            <button id="next-note" type="button" disabled aria-label="Следующая распознанная нота">Следующая</button>
+            <button id="next-note" type="button" disabled aria-label="Следующая нота">Следующая</button>
           </div>
         </section>
         <p id="timeline-semantic-summary" class="sr-only">График доступен через панель текущей ноты. Кнопки «Предыдущая» и «Следующая» последовательно открывают каждую распознанную ноту, включая короткие.</p>
@@ -159,6 +169,7 @@
         <input id="canvas-seek" class="canvas-seek" type="range" min="0" max="1" step="0.001" value="0" aria-label="Перемотка временной шкалы">
         <div class="overview-wrap"><span>Вся запись</span><canvas id="overview-canvas" aria-label="Обзор всей записи"></canvas></div>
         <div id="timeline-message" class="timeline-message"></div>
+        <section class="full-lyrics-section" aria-labelledby="full-lyrics-title"><div class="lyrics-heading"><h3 id="full-lyrics-title">Полный текст</h3><span id="lyrics-summary"></span></div><p class="lyrics-legend">≈ приблизительное время · без ноты: связь не определена. Выберите слово для просмотра.</p><div id="full-lyrics" class="full-lyrics" tabindex="0" aria-label="Все слова исходного текста"></div></section>
       </div>
     </section>
   </main>

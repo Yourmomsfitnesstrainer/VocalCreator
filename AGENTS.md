@@ -18,3 +18,11 @@ treat them as defaults a local doc can override — never edit or relate to one.
 The search is cheap — lean on it. Skip it only for turns this repo would have no
 opinion on: syntax trivia, throwaway snippets, pure mechanics.
 <!-- archcore:end -->
+
+## Постоянный проверочный пример
+
+После реализации ТЗ или исправления запускай локальный продукт на паре из `scripts/check_reference_song.py`, проверяй готовый результат в браузере, оставляй его открытым и сообщай пользователю ссылку с приглашением посмотреть. Исходные MP3/RTF/TXT и производные данные храни локально, вне Git. Сохраняй предыдущие версии и результаты.
+
+## Целевая платформа
+
+VocalCreator предназначен только для десктопа. Пользователь повторно подтвердил это 13 сентября 2026 года: мобильная версия не нужна вообще. Не трать время на мобильную разработку, адаптацию и мобильную приёмку; проверяй настольный браузер, включая низкие desktop-окна.

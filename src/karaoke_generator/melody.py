@@ -11,6 +11,101 @@ from .studio_models import MelodyResult, NoteEvent, PitchFrame, WordNoteLink
 
 NOTE_SEGMENTATION_VERSION = "1"
 WORD_NOTE_MAPPING_VERSION = "1"
+STABLE_SEGMENTATION_VERSION = "2"
+
+# Engineering defaults, versioned with derived results. Real-singing calibration
+# remains separate from the synthetic conformance fixtures.
+STABLE_OPTIONS = {
+    "minimum_event_seconds": 0.06,
+    "transition_semitones": 0.8,
+    "plateau_range_semitones": 0.45,
+    "confidence_floor": 0.45,
+}
+
+
+def stable_note_events(
+    frames: list[PitchFrame],
+    *,
+    duration: float,
+    hop_seconds: float,
+    attack_times: list[float] | None = None,
+    options: dict | None = None,
+) -> tuple[list[NoteEvent], dict]:
+    """Detect plateaus with hysteresis; retain the untouched contour separately.
+
+    Explicit unvoiced frames and missing frames split sounding islands. Energy
+    attacks may split a plateau even if its pitch has not changed. Smooth ramps
+    without a supported plateau do not generate a chromatic staircase.
+    """
+    settings = {**STABLE_OPTIONS, **(options or {})}
+    minimum = float(settings["minimum_event_seconds"])
+    window = max(3, math.ceil(minimum / hop_seconds))
+    islands: list[list[PitchFrame]] = []
+    separated = True
+    for frame in frames:
+        if not frame.voiced or frame.midi is None:
+            separated = True
+            continue
+        if separated or not islands or frame.time - islands[-1][-1].time > hop_seconds * 1.5:
+            islands.append([])
+        islands[-1].append(frame)
+        separated = False
+    notes: list[NoteEvent] = []
+    boundaries: list[dict] = []
+    rejected: list[dict] = []
+    attacks = sorted(attack_times or [])
+    for island in islands:
+        values = [float(frame.midi) for frame in island]
+        if len(values) < window:
+            rejected.append({"start": island[0].time, "reason": "insufficient_plateau_support"})
+            continue
+        label = round(statistics.median(values[:window]))
+        cuts = [(0, label)]
+        index = window
+        while index + window <= len(values):
+            local = values[index:index + window]
+            target = round(statistics.median(local))
+            distant = abs(statistics.median(local) - label) >= settings["transition_semitones"]
+            plateau = max(local) - min(local) <= settings["plateau_range_semitones"]
+            if target != label and distant and plateau:
+                # The transition begins at observed support, never at a word midpoint.
+                boundary = index
+                while boundary > cuts[-1][0] + window and abs(values[boundary - 1] - target) <= 0.4:
+                    boundary -= 1
+                if boundary - cuts[-1][0] >= window:
+                    cuts.append((boundary, target))
+                    boundaries.append({"time": island[boundary].time, "reason": "supported_pitch_transition"})
+                    label = target
+                    index += window
+                    continue
+            index += 1
+        for cut_index, (start, pitch) in enumerate(cuts):
+            stop = cuts[cut_index + 1][0] if cut_index + 1 < len(cuts) else len(island)
+            attack_cuts = [start]
+            for attack in attacks:
+                if not island[start].time + minimum <= attack <= island[stop - 1].time + hop_seconds - minimum:
+                    continue
+                cut = min(range(start, stop), key=lambda i: abs(island[i].time - attack))
+                if cut - attack_cuts[-1] >= window and stop - cut >= window:
+                    attack_cuts.append(cut)
+                    boundaries.append({"time": island[cut].time, "reason": "energy_reattack"})
+            attack_cuts.append(stop)
+            for begin, end in zip(attack_cuts, attack_cuts[1:]):
+                run = island[begin:end]
+                confidence = statistics.fmean(frame.periodicity for frame in run)
+                center = statistics.median(values[begin:end])
+                if not 0 <= pitch <= 127:
+                    continue
+                notes.append(NoteEvent(
+                    id=f"p{len(notes):05d}", start=round(run[0].time, 6),
+                    end=round(min(duration, run[-1].time + hop_seconds), 6),
+                    midi=pitch, cents=round((center - pitch) * 100, 3),
+                    confidence=round(confidence, 6), source="stable-pitch-v2",
+                    uncertain=confidence < settings["confidence_floor"] or abs(center - pitch) > 0.4,
+                ))
+    return notes, {"algorithm_version": STABLE_SEGMENTATION_VERSION, "parameters": settings,
+                   "boundaries": boundaries, "rejected": rejected,
+                   "calibration": "synthetic-contracts; human acoustic acceptance pending"}
 
 
 def hz_to_midi(hz: float) -> float:

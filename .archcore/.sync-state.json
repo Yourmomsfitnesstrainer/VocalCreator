@@ -171,6 +171,61 @@
       "source": "vocal-studio/vocal-studio.prd.md",
       "target": "lyrics-timing/word-timing-accuracy.prd.md",
       "type": "related"
+    },
+    {
+      "source": "vocal-studio/vocal-learning-detail.rnd.md",
+      "target": "vocal-studio/vocal-studio.prd.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/vocal-learning-detail.rnd.md",
+      "target": "vocal-studio/vocal-melody.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/vocal-parts-v3.spec.md",
+      "target": "vocal-studio/vocal-melody.spec.md",
+      "type": "supersedes"
+    },
+    {
+      "source": "vocal-studio/vocal-playback-v3.spec.md",
+      "target": "vocal-studio/vocal-player.spec.md",
+      "type": "supersedes"
+    },
+    {
+      "source": "vocal-studio/vocal-playback-v3.spec.md",
+      "target": "vocal-studio/vocal-parts-v3.spec.md",
+      "type": "depends_on"
+    },
+    {
+      "source": "conventions/reference-song-acceptance.rule.md",
+      "target": "vocal-studio/vocal-playback-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/vocal-studio-implementation.plan.md",
+      "target": "vocal-studio/vocal-parts-v3.spec.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/vocal-parts-v3.spec.md",
+      "target": "vocal-studio/vocal-studio.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/vocal-studio-implementation.plan.md",
+      "target": "vocal-studio/vocal-playback-v3.spec.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/vocal-playback-v3.spec.md",
+      "target": "vocal-studio/vocal-studio.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "conventions/reference-song-acceptance.rule.md",
+      "target": "vocal-studio/vocal-studio.prd.md",
+      "type": "related"
     }
   ]
 }

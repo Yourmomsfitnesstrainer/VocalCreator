@@ -384,6 +384,7 @@ def _new_manifest(job_id: str, audio: Path, lyrics: Path, input_type: str) -> di
         "stages": {},
         "cache_keys": {},
         "artifacts": {},
+        "learning": {"schema_version": 1, "preparation": "on-demand", "modes": ["light", "medium", "pro"]},
         "errors": [],
         "runtime": package_versions(),
     }

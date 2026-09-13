@@ -14,8 +14,11 @@ from fastapi.responses import FileResponse
 
 from .audio import probe_duration
 from .config import load_config
+from .learning import MODES
+from .learning_storage import prepare_learning
 from .studio import STUDIO_SCHEMA_VERSION, run_studio
 from .timing_cache import write_json
+from .v3_storage import prepare_v3, read_text, ready_modes, valid_key
 
 
 router = APIRouter(prefix="/api/studio", tags=["studio"])
@@ -80,6 +83,11 @@ def _public_manifest(job_id: str, manifest: dict[str, Any]) -> dict[str, Any]:
         if name in STUDIO_ARTIFACTS
     }
     public["status_url"] = f"/api/studio/jobs/{job_id}"
+    cached = ready_modes(_job_dir(job_id) / "result", set(available))
+    public["v3_modes"] = {
+        mode: f"/api/studio/jobs/{job_id}/v3/{mode}/{data['cache_key']}/learning.json"
+        for mode, data in cached.items()
+    }
     return public
 
 
@@ -252,6 +260,133 @@ def studio_artifact(job_id: str, filename: str) -> FileResponse:
     if not path.is_file():
         raise HTTPException(404)
     return FileResponse(path, filename=filename)
+
+
+@router.post("/jobs/{job_id}/learning/{mode}")
+def studio_learning(job_id: str, mode: str) -> dict[str, Any]:
+    manifest = _read_manifest(job_id)
+    if mode not in MODES:
+        raise HTTPException(404)
+    if manifest.get("status") in {"queued", "running"}:
+        raise HTTPException(409, "Дождитесь завершения исходного анализа")
+    if "melody.json" not in (manifest.get("artifacts") or {}):
+        raise HTTPException(409, "Нет совместимых данных нот. Готовое аудио можно прослушать отдельно.")
+    try:
+        data, _ = prepare_learning(_job_dir(job_id) / "result", mode,
+                                   piano_options=load_config().get("piano"),
+                                   alignment_available="alignment.json" in manifest.get("artifacts", {}),
+                                   vocals_available="vocals.wav" in manifest.get("artifacts", {}))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"Не удалось подготовить {mode.title()}: {exc}") from exc
+    prefix = f"/api/studio/jobs/{job_id}/learning/{mode}/{data['cache_key']}"
+    return {**data, "artifacts": {"piano.wav": f"{prefix}/piano.wav", "learning.json": f"{prefix}/learning.json"}}
+
+
+@router.get("/jobs/{job_id}/learning/{mode}/{cache_key}/{filename}")
+def studio_learning_artifact(job_id: str, mode: str, cache_key: str, filename: str) -> FileResponse:
+    _read_manifest(job_id)
+    if mode not in MODES or filename not in {"piano.wav", "learning.json"}:
+        raise HTTPException(404)
+    if len(cache_key) != 64 or any(char not in "0123456789abcdef" for char in cache_key):
+        raise HTTPException(404)
+    directory = _job_dir(job_id) / "result" / "learning" / cache_key
+    try:
+        data = json.loads((directory / "learning.json").read_text(encoding="utf-8"))
+        if data.get("mode") != mode or data.get("cache_key") != cache_key:
+            raise HTTPException(404)
+    except (OSError, ValueError):
+        raise HTTPException(404)
+    path = directory / filename
+    if not path.is_file():
+        raise HTTPException(404)
+    name = f"piano-{mode}.wav" if filename == "piano.wav" else f"melody-{mode}.json"
+    return FileResponse(path, filename=name)
+
+
+@router.get("/jobs/{job_id}/text")
+def studio_text(job_id: str) -> dict[str, Any]:
+    manifest = _read_manifest(job_id)
+    return read_text(_job_dir(job_id) / "result", set(manifest.get("artifacts") or {}),
+                     float(manifest.get("timeline", {}).get("duration", 0)))
+
+
+def _v3_response(job_id: str, data: dict) -> dict:
+    prefix = f"/api/studio/jobs/{job_id}/v3/{data['mode']}/{data['cache_key']}"
+    return {**data, "artifacts": {name: f"{prefix}/{name}" for name in ("piano.wav", "learning.json")}}
+
+
+@router.post("/jobs/{job_id}/v3/{mode}")
+def studio_v3(job_id: str, mode: str) -> dict[str, Any]:
+    manifest = _read_manifest(job_id)
+    if mode not in MODES:
+        raise HTTPException(404)
+    if manifest.get("status") in {"queued", "running"}:
+        raise HTTPException(409, "Дождитесь завершения исходного анализа")
+    try:
+        data, _ = prepare_v3(_job_dir(job_id) / "result", mode,
+                             available=set(manifest.get("artifacts") or {}), piano_options=load_config().get("piano"))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"Не удалось подготовить части слов: {exc}") from exc
+    return _v3_response(job_id, data)
+
+
+@router.get("/jobs/{job_id}/v3/{mode}/{cache_key}/{filename}")
+def studio_v3_artifact(job_id: str, mode: str, cache_key: str, filename: str):
+    _read_manifest(job_id)
+    if mode not in MODES or filename not in {"piano.wav", "learning.json"} or not valid_key(cache_key):
+        raise HTTPException(404)
+    directory = _job_dir(job_id) / "result/learning-v3" / cache_key
+    try:
+        data = json.loads((directory / "learning.json").read_text(encoding="utf-8"))
+        if data.get("cache_key") != cache_key or data.get("mode") != mode:
+            raise HTTPException(404)
+    except (OSError, ValueError):
+        raise HTTPException(404)
+    if filename == "learning.json":
+        return _v3_response(job_id, data)
+    if not (directory / filename).is_file():
+        raise HTTPException(404)
+    return FileResponse(directory / filename, filename=f"piano-v3-{mode}.wav")
+
+
+@router.post("/jobs/{job_id}/tempo/{mode}/{rate}")
+def studio_tempo(job_id: str, mode: str, rate: float) -> dict[str, Any]:
+    from .tempo import prepare_tempo
+
+    manifest = _read_manifest(job_id)
+    if mode not in (*MODES, "original"):
+        raise HTTPException(404)
+    if manifest.get("status") in {"queued", "running"}:
+        raise HTTPException(409, "Дождитесь завершения исходного анализа")
+    available = set(manifest.get("artifacts") or {})
+    root = _job_dir(job_id) / "result"
+    tracks = {name: root / f"{name}.wav" for name in ("vocals", "instrumental", "piano") if f"{name}.wav" in available}
+    try:
+        if mode != "original":
+            _, directory = prepare_v3(root, mode, available=available, piano_options=load_config().get("piano"))
+            tracks["piano"] = directory / "piano.wav"
+        data, _ = prepare_tempo(tracks, root, rate, float(manifest.get("timeline", {}).get("duration", 0)))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"Не удалось подготовить скорость: {exc}") from exc
+    prefix = f"/api/studio/jobs/{job_id}/tempo-files/{data['cache_key']}"
+    return {**data, "mode": mode, "artifacts": {filename: f"{prefix}/{filename}" for filename in data["tracks"].values()}}
+
+
+@router.get("/jobs/{job_id}/tempo-files/{cache_key}/{filename}")
+def studio_tempo_artifact(job_id: str, cache_key: str, filename: str) -> FileResponse:
+    _read_manifest(job_id)
+    if not valid_key(cache_key) or filename not in {"vocals.wav", "instrumental.wav", "piano.wav"}:
+        raise HTTPException(404)
+    path = _job_dir(job_id) / "result/tempo-v3" / cache_key / filename
+    if not path.is_file():
+        raise HTTPException(404)
+    return FileResponse(path, media_type="audio/wav")
 
 
 def recover_interrupted_jobs() -> None:

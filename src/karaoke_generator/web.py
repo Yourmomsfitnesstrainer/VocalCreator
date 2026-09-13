@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 import tempfile
 import threading
@@ -155,7 +156,11 @@ def karaoke_index() -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
-    return (STATIC_ROOT / "studio.html").read_text(encoding="utf-8")
+    html = (STATIC_ROOT / "studio.html").read_text(encoding="utf-8")
+    for name in ("studio.js", "studio.css"):
+        version = hashlib.sha256((STATIC_ROOT / name).read_bytes()).hexdigest()[:16]
+        html = html.replace(f'"/static/{name}"', f'"/static/{name}?v={version}"')
+    return html
 
 
 def _set_job(job_id: str, **changes: Any) -> None:

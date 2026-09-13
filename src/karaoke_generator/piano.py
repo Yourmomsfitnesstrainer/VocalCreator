@@ -8,7 +8,7 @@ from typing import Any
 from .studio_models import NoteEvent
 
 
-PIANO_SYNTH_VERSION = "1"
+PIANO_SYNTH_VERSION = "2"
 
 
 def render_piano(
@@ -31,9 +31,10 @@ def render_piano(
     release = float(options.get("release_seconds", 0.18))
     attack = float(options.get("attack_seconds", 0.008))
     gain = float(options.get("gain", 0.22))
+    bounded = bool(options.get("bound_to_intervals", False))
     for note in notes:
         start = max(0, round(note.start * sample_rate))
-        stop = min(total_samples, round((note.end + release) * sample_rate))
+        stop = min(total_samples, round((note.end + (0 if bounded else release)) * sample_rate))
         if stop <= start:
             continue
         seconds = np.arange(stop - start, dtype=np.float32) / sample_rate
@@ -45,6 +46,9 @@ def render_piano(
         envelope[release_mask] *= np.maximum(
             0.0, 1.0 - (seconds[release_mask] - release_start) / max(release, 1e-4)
         )
+        if bounded:
+            # A release tail must not fill a word boundary or an internal pause.
+            envelope *= np.minimum(1.0, np.maximum(0.0, held - seconds) / max(attack, 1e-4))
         frequency = 440.0 * (2.0 ** ((note.midi - 69) / 12.0))
         tone = np.zeros_like(seconds)
         for harmonic, amplitude in harmonics:
@@ -72,4 +76,5 @@ def render_piano(
         "note_count": len(notes),
         "duration": duration,
         "peak_before_normalization": peak,
+        "bound_to_intervals": bounded,
     }
