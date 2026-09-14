@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "karaoke-creator"
 version = "0.1.0"
-description = "Local audio + exact lyrics to word-highlighted karaoke MP4 pipeline"
+description = "Local desktop vocal melody studio with exact lyrics"
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = { text = "MIT" }

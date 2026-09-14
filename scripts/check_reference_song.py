@@ -73,9 +73,9 @@ def main():
         canonical = get(f"{prefix}/text")
         if canonical["canonical_text"].encode() != lyrics or len(canonical["words"]) != 305:
             raise AssertionError("Canonical lyrics or one of the 305 occurrences was lost")
-        for mode in ("light", "medium", "pro"):
+        for mode in ("full",):
             start = time.monotonic()
-            data = post(f"{prefix}/v3/{mode}")
+            data = post(f"{prefix}/melody")
             assert data["canonical_text"].encode() == lyrics
             assert [w["text"] for w in data["words"]] == [w["text"] for w in canonical["words"]]
             assert len({w["id"] for w in data["words"]}) == 305
@@ -91,7 +91,7 @@ def main():
             print(f"{mode}: {len(data['notes'])} notes, {len(data['words'])} words", flush=True)
         for rate in map(float, args.rates.split(",")):
             start = time.monotonic()
-            prepared = post(f"{prefix}/tempo/light/{rate}")
+            prepared = post(f"{prefix}/tempo/full/{rate}")
             assert abs(prepared["duration"] * rate - job["timeline"]["duration"]) < .001
             assert set(prepared["artifacts"]) == {"vocals.wav", "instrumental.wav", "piano.wav"}
             report["rates"][str(rate)] = {"seconds": round(time.monotonic() - start, 3), "cache_key": prepared["cache_key"],

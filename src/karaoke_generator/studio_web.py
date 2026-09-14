@@ -317,6 +317,18 @@ def _v3_response(job_id: str, data: dict) -> dict:
     return {**data, "artifacts": {name: f"{prefix}/{name}" for name in ("piano.wav", "learning.json")}}
 
 
+def _full_mode(job_id: str, manifest: dict) -> str:
+    # All v3 variants contain the same full events. Reuse old files verbatim.
+    cached = ready_modes(_job_dir(job_id) / "result", set(manifest.get("artifacts") or {}))
+    return next((mode for mode in ("pro", "light", "medium") if mode in cached), "pro")
+
+
+@router.post("/jobs/{job_id}/melody")
+def studio_full_melody(job_id: str) -> dict[str, Any]:
+    manifest = _read_manifest(job_id)
+    return studio_v3(job_id, _full_mode(job_id, manifest))
+
+
 @router.post("/jobs/{job_id}/v3/{mode}")
 def studio_v3(job_id: str, mode: str) -> dict[str, Any]:
     manifest = _read_manifest(job_id)
@@ -350,7 +362,7 @@ def studio_v3_artifact(job_id: str, mode: str, cache_key: str, filename: str):
         return _v3_response(job_id, data)
     if not (directory / filename).is_file():
         raise HTTPException(404)
-    return FileResponse(directory / filename, filename=f"piano-v3-{mode}.wav")
+    return FileResponse(directory / filename, filename="piano.wav")
 
 
 @router.post("/jobs/{job_id}/tempo/{mode}/{rate}")
@@ -358,7 +370,7 @@ def studio_tempo(job_id: str, mode: str, rate: float) -> dict[str, Any]:
     from .tempo import prepare_tempo
 
     manifest = _read_manifest(job_id)
-    if mode not in (*MODES, "original"):
+    if mode not in (*MODES, "original", "full"):
         raise HTTPException(404)
     if manifest.get("status") in {"queued", "running"}:
         raise HTTPException(409, "Дождитесь завершения исходного анализа")
@@ -367,7 +379,8 @@ def studio_tempo(job_id: str, mode: str, rate: float) -> dict[str, Any]:
     tracks = {name: root / f"{name}.wav" for name in ("vocals", "instrumental", "piano") if f"{name}.wav" in available}
     try:
         if mode != "original":
-            _, directory = prepare_v3(root, mode, available=available, piano_options=load_config().get("piano"))
+            source_mode = _full_mode(job_id, manifest) if mode == "full" else mode
+            _, directory = prepare_v3(root, source_mode, available=available, piano_options=load_config().get("piano"))
             tracks["piano"] = directory / "piano.wav"
         data, _ = prepare_tempo(tracks, root, rate, float(manifest.get("timeline", {}).get("duration", 0)))
     except (ValueError, KeyError, TypeError) as exc:

@@ -6,10 +6,9 @@ tags:
   - "surface"
 ---
 
-
 ## Overview
 
-Публичная поверхность демки 0.1: пять CLI-команд и два локальных HTTP API. Маркировка приложения 0.1/0.1.0 не меняет существующие пути `/v3` и форматы файлов.
+Публичная поверхность демки 0.1: три CLI-команды и локальный HTTP API студии. Маркировка приложения 0.1/0.1.0 не меняет существующие пути `/v3` и форматы файлов.
 
 ## Content
 
@@ -17,13 +16,11 @@ tags:
 
 | Команда | Назначение |
 |---|---|
-| `generate` | Аудио и точный TXT → Karaoke MP4 |
 | `studio` | Анализ вокала, слов, высоты, нот и пианино |
-| `render` | Повторный MP4 из отредактированного alignment |
 | `doctor` | Диагностика локальных зависимостей |
 | `web` | FastAPI/Uvicorn, loopback по умолчанию |
 
-Короткая форма `--audio` без подкоманды вызывает `generate`. Аргументы: @src/karaoke_generator/cli.py.
+Команды создания видео и неявная команда для `--audio` удалены. Аргументы: @src/karaoke_generator/cli.py.
 
 ### HTTP студии
 
@@ -36,6 +33,7 @@ tags:
 | `GET /{id}` | Состояние, стадии, allowlisted artifacts и готовые v3_modes |
 | `GET /{id}/artifacts/{filename}` | Исходный артефакт, зарегистрированный в манифесте |
 | `GET /{id}/text` | Полная каноническая лирика и вхождения слов, включая слова без времени |
+| `POST /{id}/melody` | Единая полная мелодия с повторным использованием готового v3-кеша |
 | `POST /{id}/v3/{mode}` | Готовый JSON частей/связей и ссылки на производное пианино |
 | `GET /{id}/v3/{mode}/{cache_key}/{filename}` | learning.json или piano.wav текущего формата |
 | `POST /{id}/tempo/{mode}/{rate}` | Совместно подготовленные дорожки выбранной скорости |
@@ -43,7 +41,7 @@ tags:
 | `POST /{id}/learning/{mode}` | Историческое учебное представление для совместимости |
 | `GET /{id}/learning/{mode}/{cache_key}/{filename}` | JSON/WAV исторического формата |
 
-В первых двух строках `/` означает сам префикс без завершающего слеша. `mode=light|medium|pro`; только tempo также принимает `original`. Скорости: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2. Ключ производных — 64 шестнадцатеричных символа.
+В первых двух строках `/` означает сам префикс без завершающего слеша. Новый клиент получает `/melody` и использует `mode=full` для tempo. Имена `light|medium|pro` сохраняются для совместимости старых файлов/API; tempo также принимает `original`. Скорости: 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2. Ключ производных — 64 шестнадцатеричных символа.
 
 Загрузка принимает MP3/WAV/FLAC/M4A/AAC/OGG, `input_type=mix|vocal`, `language=auto` либо буквенный код длиной 2–3, `pitch_backend=torchcrepe|autocorrelation`, `separator_backend=demucs|melband-roformer`. RTF преобразуется в TXT вне HTTP API.
 
@@ -51,10 +49,10 @@ HTTP 202 означает принятие задания; завершение 
 
 Исходный allowlist: vocals.wav, instrumental.wav, piano.wav, melody.json, alignment.json, studio.json, lyrics.txt, processed_lyrics.txt, lyrics_cleanup.json. Наличие файла на диске без регистрации в манифесте не открывает исходный download endpoint.
 
-### HTTP Karaoke
+### Удалённая поверхность
 
-`GET /karaoke` — форма; `POST /api/jobs` — фоновая генерация; `GET /api/jobs/{id}` — состояние; `POST /generate` — синхронный HTML fallback; `GET /jobs/{id}/{filename}` — разрешённый результат. Реализация: @src/karaoke_generator/web.py.
+Karaoke MP4, `/karaoke`, `/api/jobs`, `/generate`, `/jobs/{id}/{filename}` удалены. Старые пользовательские файлы на диске сохраняются.
 
 ## Examples
 
-Браузер открывает `GET /`, затем читает библиотеку и `GET /api/studio/jobs/{id}/text`. При наличии исходного анализа `POST /api/studio/jobs/{id}/v3/light` подготавливает части без полного повторного анализа песни.
+Браузер открывает `GET /`, затем читает библиотеку и `GET /api/studio/jobs/{id}/text`. При наличии исходного анализа `POST /api/studio/jobs/{id}/melody` подготавливает части без полного повторного анализа песни.

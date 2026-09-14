@@ -14,7 +14,7 @@ const state = {
   rate:1,pendingRate:null,desiredRate:1,desiredMode:null,v3Enabled:false,canonicalText:'',canonicalWords:[],
   tempoPreparation:null,heightZoom:1,midiMin:48,midiMax:72,baseRow:12,selectedWord:null,wordNodes:new Map(),
   selectedRegion:null,wordContextKey:null,presentation:null,labelLayout:null,timelineHits:[],
-  follow:'off',scrollPosition:null,verticalTarget:null,followFrameTime:null
+  follow:'off',scrollPosition:null,readingView:null,lyricLayout:null,glyphCache:new Map(),upcomingKey:null
 };
 const trackMeta = {
   vocals:{label:'Вокал',file:'vocals.wav'},piano:{label:'Пианино',file:'piano.wav'},instrumental:{label:'Минус',file:'instrumental.wav'}
@@ -107,8 +107,7 @@ async function applyJob(job){
   state.melody=melody.status==='fulfilled'?melody.value:null;state.alignment=alignment.status==='fulfilled'?alignment.value:null;
   if(text.status==='fulfilled'){state.canonicalText=text.value.canonical_text||'';state.canonicalWords=text.value.words||[];}
   flattenWords();renderFullLyrics();renderDownloads(artifacts);renderMixer(artifacts);
-  state.modeAvailability={pro:state.melody?null:'Нет совместимых данных нот.',light:state.words.length?null:'Нет временной разметки текста.',medium:state.words.length?null:'Нет временной разметки текста.'};
-  if(!state.melody)state.modeAvailability.light=state.modeAvailability.medium=state.modeAvailability.pro;
+  state.modeAvailability={full:state.melody?null:'Нет совместимых данных нот.'};
   renderModes();
   const buffers=await loadAudioTracks(artifacts);
   if(request!==state.jobRequest)return;
@@ -120,11 +119,9 @@ async function applyJob(job){
   $('#play-button').disabled=!Object.keys(state.buffers).length;$('#zoom-slider').disabled=false;$('#height-slider').disabled=false;$('#speed-select').disabled=!Object.keys(state.buffers).length;$('#speed-select').value='1';$('#speed-status').hidden=true;
   updatePitchRange();moveTimeline(0,0);
   resizeTimeline();drawAll();
-  let preferred='light';try{preferred=localStorage.getItem(`vocalcreator:mode:${job.id}`)||'light';}catch(_){}
-  if(!['light','medium','pro'].includes(preferred))preferred='light';
-  if(state.modeAvailability[preferred])preferred='pro';
-  const cached=job.v3_modes||{};state.v3Enabled=Object.keys(cached).length>0;renderModes();
-  if(state.v3Enabled){if(!cached[preferred])preferred=Object.keys(cached)[0];await requestMode(preferred);}
+  state.v3Enabled=Object.keys(job.v3_modes||{}).length>0;renderModes();
+  if(state.v3Enabled)await requestMode('full');
+  followPosition(currentPosition(),{immediate:true});drawAll();
 }
 
 $('#result-recovery').addEventListener('click',()=>{
@@ -166,22 +163,15 @@ function renderFullLyrics(){
 }
 function renderDownloads(artifacts){
   const allowed=[['vocals.wav','Вокал'],['instrumental.wav','Минус'],['melody.json','Исходные ноты']];
-  if(state.learning){artifacts={...artifacts,'mode-piano':state.learning.artifacts?.['piano.wav'],'mode-notes':state.learning.artifacts?.['learning.json']};allowed.push(['mode-piano',`Пианино · ${modeName(state.mode)}`],['mode-notes',`Ноты · ${modeName(state.mode)}`]);}
+  if(state.learning){artifacts={...artifacts,'mode-piano':state.learning.artifacts?.['piano.wav'],'mode-notes':state.learning.artifacts?.['learning.json']};allowed.push(['mode-piano','Пианино'],['mode-notes','Ноты и слова']);}
   else if(artifacts['piano.wav'])allowed.push(['piano.wav','Пианино · исходное']);
   const root=$('#downloads');root.replaceChildren();for(const [name,label] of allowed){if(!artifacts[name])continue;const link=document.createElement('a');link.href=artifacts[name];link.download=name;link.innerHTML=`<svg aria-hidden="true"><use href="#icon-download"/></svg><span>${label}</span>`;root.append(link);}
 }
 
 function activeNotes(){return state.learning?.notes||state.melody?.notes||[];}
 function intervalsFor(note){return note.intervals||[{start:note.start,end:note.end}];}
-function modeName(mode){return {light:'Light',medium:'Medium',pro:'Pro'}[mode]||'Исходный разбор';}
+function modeName(mode){return mode?'Полная мелодия':'Исходный разбор';}
 function renderModes(){
-  for(const input of document.querySelectorAll('[name="learning-mode"]')){
-    input.checked=input.value===(state.pendingMode||state.mode);
-    input.disabled=state.loadingAudio||!state.melody||!state.v3Enabled||Boolean(state.modeAvailability[input.value]);
-    input.parentElement.title=state.modeAvailability[input.value]||(!state.v3Enabled?'Сначала подготовьте части слов.':'');
-  }
-  $('#active-mode').textContent=state.mode?`${modeName(state.mode)} · Части слов`:'Исходный разбор';
-  $('#learning-explanation').textContent=state.mode?'Все подтверждённые переходы сохранены. На этом этапе режимы используют общий подробный набор нот.':'Исходные ноты, полный текст и обычное воспроизведение доступны.';
   $('#v3-preparation').hidden=Boolean(state.learning);
   $('#prepare-v3').disabled=state.loadingAudio||!state.melody||Boolean(state.pendingMode);
   $('#prepare-v3').textContent=state.pendingMode?'Готовятся части слов…':'Подготовить части слов';
@@ -212,8 +202,7 @@ async function requestPlayback(mode,rate){
   try{
     let prepared=mode?state.modeCache.get(mode):null;
     if(mode&&!prepared){
-      const saved=state.job.v3_modes?.[mode];
-      const data=await json(saved||`/api/studio/jobs/${job}/v3/${mode}`,saved?{signal}:{method:'POST',signal});
+      const data=await json(`/api/studio/jobs/${job}/melody`,{method:'POST',signal});
       if(!current())return;
       const buffer=await fetchBuffer(data.artifacts['piano.wav'],signal,state.duration);
       if(!current())return;prepared={data,buffer};state.modeCache.set(mode,prepared);
@@ -260,8 +249,7 @@ async function requestPlayback(mode,rate){
     const diagnostics=state.learning?.diagnostics||{},parts=state.learning?.text_parts||[];
     const fallback=parts.filter(part=>part.kind==='whole-word-fallback'||part.status==='fallback').length;
     $('#timeline-message').textContent=`Текст над шкалой сохраняется и без ноты. Подписи над нотами; ─ означает продолжение. Приглушённые участки звучат без текстовой границы. Голубая линия — исходная высота голоса.${diagnostics.notes_with_lyric_context?` «Контекст» на ${diagnostics.notes_with_lyric_context} нотах: показано соседнее слово лирики, точное слово на этом участке не подтверждено.`:''}${fallback?` Частей без определённой слоговой границы: ${fallback}; полное слово доступно в тексте и инспекторе.`:''}${diagnostics.words_without_notes?` Слов без ноты: ${diagnostics.words_without_notes}.`:''}`;
-    if(mode)try{localStorage.setItem(`vocalcreator:mode:${job}`,mode);}catch(_){}
-    state.selectedRegion=null;state.wordContextKey=null;followPosition(currentPosition(),{immediate:true});drawAll();
+    state.selectedRegion=null;state.wordContextKey=null;resizeTimeline();followPosition(currentPosition(),{immediate:true});drawAll();
   }catch(error){
     if(!current())return;
     state.pendingMode=null;state.pendingRate=null;state.desiredMode=state.mode;state.desiredRate=state.rate;renderModes();
@@ -269,8 +257,7 @@ async function requestPlayback(mode,rate){
     speedStatus.hidden=true;
   }
 }
-document.querySelectorAll('[name="learning-mode"]').forEach(input=>input.addEventListener('change',()=>{if(input.checked)requestMode(input.value);}));
-$('#prepare-v3').addEventListener('click',()=>{state.v3Enabled=true;requestMode('light');});
+$('#prepare-v3').addEventListener('click',()=>{state.v3Enabled=true;requestMode('full');});
 $('#speed-select').addEventListener('change',event=>requestRate(Number(event.target.value)));
 
 async function ensureContext(){
@@ -300,8 +287,9 @@ function currentPosition(){
 }
 const followStorageKey='vocalcreator:karaoke-follow';
 function renderFollow(){
+  document.body?.classList.toggle('karaoke-view',state.follow!=='off');
   $('#karaoke-toggle').checked=state.follow!=='off';
-  $('#karaoke-status').textContent=state.follow==='suspended'?'Следование приостановлено':state.follow==='following'?'Следование за словами и нотами':'Автоследование за словами и нотами';
+  $('#karaoke-status').textContent=state.follow==='suspended'?'Ручной просмотр':state.follow==='following'?'Следование за текстом':'Автоследование за словами и нотами';
   const button=$('#karaoke-return');
   // A keyboard activation must not remove its own focus target. Retire the
   // return control after focus leaves it; repeated activation just recenters.
@@ -310,7 +298,7 @@ function renderFollow(){
 }
 function suspendFollow(){
   if(state.follow!=='following')return;
-  state.follow='suspended';state.verticalTarget=null;state.followFrameTime=null;renderFollow();
+  state.follow='suspended';renderFollow();
 }
 function rememberScroll(){const scroll=$('#timeline-scroller');state.scrollPosition={x:scroll.scrollLeft,y:scroll.scrollTop};}
 function observeTimelineScroll(){
@@ -329,41 +317,22 @@ function moveTimeline(x,y){
 function followPosition(position=currentPosition(),{immediate=false}={}){
   observeTimelineScroll();
   if(state.follow!=='following')return;
-  const scroll=$('#timeline-scroller'),usable=Math.max(1,scroll.clientHeight-110),center=110+usable/2;
-  const notes=activeNotes(),note=notes[activeNoteIndex(position)];
-  let y=scroll.scrollTop;
-  if(note){
-    const screen=midiY(note.midi),half=Math.max(3,rowHeight()*.76)/2;
-    const safeTop=110+usable*.2+half,safeBottom=110+usable*.8-half;
-    if(immediate||state.verticalTarget?.note!==note){
-      state.verticalTarget=null;
-      if(immediate||screen<safeTop||screen>safeBottom){
-        const nearby=notes.filter(item=>item.start>=position&&item.start<=position+2).map(item=>midiY(item.midi));
-        const top=Math.min(screen,...nearby),bottom=Math.max(screen,...nearby);
-        const targetCenter=bottom-top+2*half<=usable*.6?(top+bottom)/2:screen;
-        state.verticalTarget={note,y:Math.max(0,Math.min(scroll.scrollHeight-scroll.clientHeight,y+targetCenter-center))};
-      }
-    }
-    if(state.verticalTarget){
-      const now=state.context?.currentTime??0,dt=state.followFrameTime==null?1/60:Math.max(0,now-state.followFrameTime);
-      const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      const weight=immediate||reduced?1:1-Math.exp(-dt/.085);
-      y+=(state.verticalTarget.y-y)*weight;
-      // Even on a large pitch jump the current bar stays fully visible while
-      // the final centering eases; no queued animation can trail the audio.
-      y=Math.max(scroll.scrollTop+screen-(scroll.clientHeight-half-6),Math.min(scroll.scrollTop+screen-(110+half+6),y));
-    }
-  }else state.verticalTarget=null;
-  state.followFrameTime=state.context?.currentTime??null;
-  moveTimeline(position*pixelsPerSecond()-(scroll.clientWidth-74)*.35,y);
+  const scroll=$('#timeline-scroller');
+  // The whole note range fits the singing view, so pitch never moves the camera.
+  moveTimeline(position*pixelsPerSecond()-(scroll.clientWidth-74)*.35,0);
 }
 function setKaraoke(enabled){
-  rememberScroll();state.follow=enabled?'following':'off';state.verticalTarget=null;state.followFrameTime=null;
+  const scroll=$('#timeline-scroller');
+  if(enabled&&state.follow==='off')state.readingView={x:scroll.scrollLeft,y:scroll.scrollTop};
+  rememberScroll();state.follow=enabled?'following':'off';
   try{localStorage.setItem(followStorageKey,String(enabled));}catch(_){}
-  renderFollow();if(enabled)followPosition(currentPosition(),{immediate:true});drawAll();
+  renderFollow();resizeTimeline();
+  if(enabled)followPosition(currentPosition(),{immediate:true});
+  else if(state.readingView)moveTimeline(state.readingView.x,state.readingView.y);
+  drawAll();
 }
 $('#karaoke-toggle').addEventListener('change',event=>setKaraoke(event.target.checked));
-$('#karaoke-return').addEventListener('click',()=>{rememberScroll();state.follow='following';state.verticalTarget=null;renderFollow();followPosition(currentPosition(),{immediate:true});drawAll();});
+$('#karaoke-return').addEventListener('click',()=>{rememberScroll();state.follow='following';renderFollow();followPosition(currentPosition(),{immediate:true});drawAll();});
 $('#karaoke-return').addEventListener('blur',renderFollow);
 function transportIcon(playing){
   const button=$('#play-button'),label=playing?'Пауза':'Воспроизвести';
@@ -403,7 +372,7 @@ function stopSources(){Object.values(state.sources).forEach(source=>{try{source.
 function pause(){
   ++state.playRequest;state.starting=false;
   if(state.playing)state.position=currentPosition();state.playing=false;
-  stopSources();cancelAnimationFrame(state.frame);state.frame=null;state.followFrameTime=null;transportIcon(false);updatePositionUI();
+  stopSources();cancelAnimationFrame(state.frame);state.frame=null;transportIcon(false);updatePositionUI();
 }
 function seek(value){state.selectedWord=null;state.selectedRegion=null;state.inspectorKey=null;const resume=state.playing||state.starting;if(resume)pause();state.position=Math.max(0,Math.min(state.duration,Number(value)||0));followPosition(state.position,{immediate:true});updatePositionUI();drawAll();if(resume)play();}
 function tick(){
@@ -422,10 +391,29 @@ $('#refresh-library').addEventListener('click',loadLibrary);
 document.addEventListener('keydown',event=>{if(event.defaultPrevented||event.repeat||event.ctrlKey||event.metaKey||event.altKey||event.target.closest('input,select,textarea,button,a,[contenteditable=true]'))return;if(event.code==='Space'){event.preventDefault();$('#play-button').click();}if(event.key==='ArrowRight')seek(currentPosition()+2);if(event.key==='ArrowLeft')seek(currentPosition()-2);});
 
 function setRangeBounds(){for(const selector of ['#seek-slider','#canvas-seek']){const input=$(selector);input.max=Math.max(.001,state.duration);input.disabled=!state.duration;}}
-function pixelsPerSecond(){return 28*state.zoom;}
+const readingAheadSeconds=3;
+function pixelsPerSecond(){
+  if(state.follow==='off')return 28*state.zoom;
+  // Reserve a real-time reading horizon even after a speed or zoom change.
+  const futureWidth=Math.max(80,($('#timeline-scroller').clientWidth-74)*.65-120);
+  return Math.min(28*state.zoom,futureWidth/(readingAheadSeconds*state.rate));
+}
+function timelineRange(){
+  if(state.follow==='off')return {min:state.midiMin,max:state.midiMax};
+  const notes=activeNotes();
+  if(state.pitchRange?.notes!==notes){
+    const pitches=notes.map(note=>note.midi).filter(Number.isFinite);
+    const min=pitches.length?Math.floor(Math.min(...pitches))-2:48;
+    state.pitchRange={notes,min,max:pitches.length?Math.max(min+12,Math.ceil(Math.max(...pitches))+2):72};
+  }
+  return state.pitchRange;
+}
 function resizeTimeline(){
+  const effective=pixelsPerSecond()/28,capped=effective<state.zoom-.001;
+  $('#zoom-value').textContent=`${Number(effective.toFixed(2))}×`;
+  $('#zoom-value').title=capped?`Выбрано ${state.zoom}×; масштаб ограничен для чтения следующих слов за 3 секунды.`:'';
   const scroller=$('#timeline-scroller'),canvas=$('#timeline-canvas'),spacer=$('#timeline-spacer'),height=Math.max(200,scroller.clientHeight),width=Math.max(320,scroller.clientWidth);
-  spacer.style.width=`${Math.max(width,state.duration*pixelsPerSecond()+82)}px`;spacer.style.height=`${Math.max(height,126+(state.midiMax-state.midiMin+1)*rowHeight()+28)}px`;canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;const dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
+  spacer.style.width=`${Math.max(width,state.duration*pixelsPerSecond()+82)}px`;spacer.style.height=`${state.follow!=='off'?height:Math.max(height,126+(state.midiMax-state.midiMin+1)*rowHeight()+28)}px`;canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;const dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
   const overview=$('#overview-canvas'),overviewWidth=Math.max(180,overview.clientWidth),overviewHeight=Math.max(42,overview.clientHeight);overview.width=Math.round(overviewWidth*dpr);overview.height=Math.round(overviewHeight*dpr);rememberScroll();state.labelLayout=null;
 }
 function makePeaks(){
@@ -439,8 +427,8 @@ function updatePitchRange(){
   state.midiMax=pitches.length?Math.min(127,Math.ceil(pitches.reduce((max,pitch)=>Math.max(max,pitch),0))+2):72;
   state.baseRow=Math.max(1,($('#timeline-scroller').clientHeight-154)/(state.midiMax-state.midiMin+1));
 }
-function rowHeight(){return state.baseRow*state.heightZoom;}
-function midiY(midi){return 126+(state.midiMax-midi+.5)*rowHeight()-$('#timeline-scroller').scrollTop;}
+function rowHeight(){const range=timelineRange();return state.follow==='off'?state.baseRow*state.heightZoom:Math.max(1,($('#timeline-scroller').clientHeight-154)/(range.max-range.min+1));}
+function midiY(midi){return 126+(timelineRange().max-midi+.5)*rowHeight()-$('#timeline-scroller').scrollTop;}
 function noteLabels(note){
   const links=note.labels||state.learning?.note_text_links?.filter(link=>link.note_id===note.id);
   if(links?.length)return links.map(link=>{const part=state.learning?.text_parts?.find(part=>part.id===link.part_id);return {...link,text:link.text||part?.text||'',context:link.context||link.status==='context'||link.kind==='lyric-context',fallback:link.fallback||link.kind==='whole-word-fallback'||part?.kind==='whole-word-fallback'||part?.status==='fallback'||link.status==='fallback',approximate:link.approximate||['approximate','context'].includes(link.status)||part?.status==='approximate',reason:link.reason||part?.reason,message:link.message||part?.message};});
@@ -499,7 +487,7 @@ function renderInspector(position=currentPosition()){
   const linked=region?.labels||[],contextOnly=linked.length&&linked.every(label=>label.context),gap=region?.gap;
   const word=(!state.playing&&state.words.find(item=>item.id===state.selectedWord))||(!gap&&!contextOnly&&activeWord)||state.words.find(item=>linked.some(label=>label.word_id===item.id));
   const key=`${note?.id||'none'}:${word?.id||'none'}:${activeWord?.id||''}:${state.selectedWord||''}:${region?.start}:${gap}:${contextOnly}`;
-  const summary=`График содержит ${notes.length} нот выбранного режима и ${state.words.length} слов. Кнопки «Предыдущая» и «Следующая» последовательно открывают каждую ноту, включая короткие.`,positionLabel=index>=0?`${index+1} / ${notes.length}`:`– / ${notes.length}`;
+  const summary=`График содержит ${notes.length} нот полной мелодии и ${state.words.length} слов. Кнопки «Предыдущая» и «Следующая» последовательно открывают каждую ноту, включая короткие.`,positionLabel=index>=0?`${index+1} / ${notes.length}`:`– / ${notes.length}`;
   if($('#timeline-semantic-summary').textContent!==summary)$('#timeline-semantic-summary').textContent=summary;
   if($('#inspector-position').textContent!==positionLabel)$('#inspector-position').textContent=positionLabel;
   let previousIndex=-1;for(let candidate=notes.length-1;candidate>=0;candidate--){if(notes[candidate].start<position-.001){previousIndex=index===candidate?candidate-1:candidate;break;}}
@@ -507,7 +495,7 @@ function renderInspector(position=currentPosition()){
   $('#previous-note').disabled=previousIndex<0;$('#next-note').disabled=nextIndex<0||nextIndex>=notes.length;
   if(state.inspectorKey===key)return;state.inspectorKey=key;
   if(note){
-    const cents=Number(note.cents)||0,score=Number(note.confidence),certainty=note.uncertain?'≈ приблизительная нота':state.mode&&state.mode!=='pro'?'учебная высота':'устойчивая нота';
+    const cents=Number(note.cents)||0,score=Number(note.confidence),certainty=note.uncertain?'≈ приблизительная нота':'устойчивая нота';
     $('#inspector-note').textContent=noteName(note.midi,true);
     $('#inspector-detail').textContent=`${formatTime(note.start,false)}–${formatTime(note.end,false)} · ${cents>=0?'+':''}${cents.toFixed(1)} cents · score ${Number.isFinite(score)?score.toFixed(3):'нет'} · ${certainty}`;
   }else{
@@ -526,7 +514,7 @@ function renderInspector(position=currentPosition()){
   const wordKey=`${word?.id||''}:${contextOnly}:${region?.ambiguous||false}`;
   if(state.wordContextKey!==wordKey){
     state.wordContextKey=wordKey;
-    $('#inspector-word').textContent=word?`${contextOnly?'Контекст: ':isApproximateWord(word)||region?.ambiguous?'≈ ':''}${word.text}`:'Нет слова';
+    $('#inspector-word').textContent=word?word.text:'Нет слова';
     $('#inspector-word').title=$('#inspector-word').textContent;
     const wordIndex=word?state.words.indexOf(word):-1;
     for(const [selector,offset,title] of [['#word-previous',-1,'До'],['#word-next',1,'Далее'],['#word-after-next',2,'Затем']]){
@@ -534,7 +522,19 @@ function renderInspector(position=currentPosition()){
       node.textContent=neighbor?.text||'—';node.title=`${title}: ${neighbor?.text||'нет слова'}`;node.setAttribute('aria-label',node.title);
     }
   }
-  $('#inspector-word-status').textContent=gap?'Звучание без текстовой границы':contextOnly?'Слово здесь не подтверждено':region?.ambiguous?'≈ Спорная граница слов':linked.some(label=>label.fallback)?'≈ Часть слова не определена':linked.some(label=>label.approximate)?'≈ Приблизительная граница части':word?(isApproximateWord(word)?'≈ Приблизительная привязка':Number.isFinite(word.start)?'Прямая привязка':'≈ Время не определено'):'Связь с текстом отсутствует';
+  const statusSymbols=[];
+  if(gap)statusSymbols.push(['∅','Звучание без текстовой границы']);
+  if(contextOnly)statusSymbols.push(['к','Контекст: слово здесь не подтверждено']);
+  if(region?.ambiguous)statusSymbols.push(['?','Спорная граница слов']);
+  if(linked.some(label=>label.fallback))statusSymbols.push(['…','Точная часть слова не определена']);
+  if(linked.some(label=>label.approximate)||word&&isApproximateWord(word)||note?.uncertain)statusSymbols.push(['≈','Приблизительная нота, время или граница']);
+  if(linked.some(label=>label.continuation))statusSymbols.push(['─','Продолжение слова или распева']);
+  if(!word||!note)statusSymbols.push(['∅',!word?'Нет связи с текстом':'Нет определимой ноты']);
+  const statusNode=$('#inspector-word-status');
+  statusNode.textContent=[...new Set(statusSymbols.map(item=>item[0]))].join(' ');
+  statusNode.title=statusSymbols.map(item=>item[1]).join('; ')||'Прямая привязка';
+  statusNode.setAttribute('aria-label',statusNode.title);
+
   $('#inspector-region-detail').textContent=region?`${formatTime(region.start)}–${formatTime(region.end)} · исходная нота ${note.id}\n${gap?'Звучание продолжается; в этом промежутке нет текстовой границы.':region.undivided?'Недостаточно временных связей: нота показана целиком, границы не придуманы.':region.ambiguous?'≈ Связи слов перекрываются; точная граница спорная.':''}\n${linked.map(label=>`${label.context?'Контекст: ':''}${label.text} · word_id: ${label.word_id||'не задан'} · part_id: ${label.part_id||'не задан'}`).join('\n')}`:'';
 }
 $('#inspector-more').addEventListener('click',()=>$('#inspector-dialog').showModal());
@@ -547,8 +547,90 @@ function navigateNote(direction){
 }
 $('#previous-note').addEventListener('click',()=>navigateNote(-1));$('#next-note').addEventListener('click',()=>navigateNote(1));
 $('#timeline-canvas').addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();event.stopPropagation();navigateNote(event.key==='ArrowRight'?1:-1);}});
-function drawAll(position=currentPosition()){renderInspector(position);drawTimeline(position);drawOverview(position);}
+function drawAll(position=currentPosition()){renderInspector(position);renderUpcoming(position);drawTimeline(position);drawOverview(position);}
+// Rasterize glyphs once, then translate the same bitmap on the device-pixel grid.
+// Fractional fillText origins used to change antialiasing as the view followed time.
+function drawReadingText(ctx,text,x,y,font,color){
+  const dpr=Math.min(2,window.devicePixelRatio||1),key=[dpr,font,color,text].join('|');
+  let glyph=state.glyphCache.get(key);
+  if(!glyph){
+    const canvas=document.createElement('canvas'),paint=canvas.getContext('2d');
+    paint.font=font;const width=Math.ceil(paint.measureText(text).width)+4;
+    canvas.width=Math.ceil(width*dpr);canvas.height=Math.ceil(24*dpr);
+    paint.setTransform(dpr,0,0,dpr,0,0);paint.font=font;paint.fillStyle=color;paint.fillText(text,2,17);
+    glyph={canvas,width:canvas.width/dpr,height:canvas.height/dpr};if(state.glyphCache.size>=2048)state.glyphCache.clear();state.glyphCache.set(key,glyph);
+  }
+  ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(glyph.canvas,Math.round((x-2)*dpr)/dpr,Math.round((y-17)*dpr)/dpr,glyph.width,glyph.height);
+}
+function readingLabelLayout(ctx,{width,height,startTime,endTime}){
+  const presentation=timelinePresentation(),scroll=$('#timeline-scroller'),pps=pixelsPerSecond();
+  const key=[pps,height,rowHeight(),timelineRange().min,timelineRange().max].join(':');
+  if(state.readingLabels?.presentation!==presentation||state.readingLabels?.key!==key){
+    const occupied=[],labels=[],anchored=new Set();let crowded=false;
+    const boxes=activeNotes().flatMap(note=>intervalsFor(note).map(interval=>({x:74+interval.start*pps,end:74+interval.end*pps,top:midiY(note.midi+.38),bottom:midiY(note.midi+.38)+Math.max(3,rowHeight()*.76)})));
+    for(const span of presentation.spans){
+      const {note,label,start,end,continued,group}=span;
+      const prefix=label.context?'к ':label.fallback||label.approximate?'≈ ':'';
+      const text=continued&&anchored.has(group)?`${prefix}─`:`${prefix}${label.text}${continued?' ─':''}`;
+      ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width;
+      const x=74+start*pps,noteY=midiY(note.midi+.38);let y=Math.max(94,noteY-5),placed=false;
+      for(;y>=94;y-=16){
+        const top=y-12,bottom=y+4,endX=x+measured+8;
+        const overlaps=box=>x<box.end+2&&endX+2>box.x&&top<box.bottom+2&&bottom+2>box.top;
+        if(!occupied.some(overlaps)&&!boxes.some(overlaps)){placed=true;break;}
+      }
+      if(!placed){crowded=true;continue;}
+      occupied.push({x,end:x+measured+8,top:y-12,bottom:y+4});anchored.add(group);
+      labels.push({text,x,y,measured,noteX:x,noteY,noteId:note.id,wordId:label.word_id,missing:label.missing,start,end,group,label});
+    }
+    state.readingLabels={presentation,key,labels,crowded};
+  }
+  const labels=state.readingLabels.labels.filter(label=>label.x+label.measured+8>scroll.scrollLeft+74&&label.x<scroll.scrollLeft+width)
+    .map(label=>({...label,x:label.x-scroll.scrollLeft,noteX:label.noteX-scroll.scrollLeft}));
+  // Restore a full word anchor when entering the middle of a sustained part.
+  // Its shelf is fixed; it does not reflow or displace any timeline label.
+  const groups=new Set(labels.filter(label=>label.text.includes(label.label.text)).map(label=>label.group));
+  for(const span of presentation.spans){
+    if(span.start>=startTime||span.end<=startTime||groups.has(span.group)||span.label.missing)continue;
+    const text=`${span.label.context?'к ':span.label.approximate||span.label.fallback?'≈ ':''}${span.label.text} ─`;
+    ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width;
+    if(labels.some(label=>label.x<74+measured+8&&label.y===94))continue;
+    labels.push({text,x:74,y:94,measured,noteX:74,noteY:midiY(span.note.midi+.38),noteId:span.note.id,wordId:span.label.word_id});groups.add(span.group);
+  }
+  return {labels,crowded:state.readingLabels.crowded};
+}
+function readingWordsLayout(ctx){
+  const pps=pixelsPerSecond(),key=String(pps);
+  if(state.lyricLayout?.words===state.words&&state.lyricLayout.key===key)return state.lyricLayout.items;
+  const lanes=[-Infinity,-Infinity],items=[];
+  for(const word of state.words){
+    if(!Number.isFinite(word.start)||!Number.isFinite(word.end))continue;
+    const x=74+word.start*pps,text=`${isApproximateWord(word)?'≈ ':''}${word.text}`;
+    ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width;
+    const lane=lanes[0]<=x?0:lanes[1]<=x?1:-1;
+    if(lane<0)continue;
+    lanes[lane]=x+measured+8;items.push({word,x,text,measured,y:60+lane*15});
+  }
+  state.lyricLayout={key,words:state.words,items};return items;
+}
+function upcomingWords(position){
+  const timed=state.words.filter(word=>Number.isFinite(word.start)&&Number.isFinite(word.end));
+  const current=timed.find(word=>word.start<=position&&position<word.end);
+  const first=timed.find(word=>word.start>(current?.start??position));
+  if(!first)return [];
+  const until=Math.max(current?.end??position,first.start)+readingAheadSeconds*state.rate;
+  return timed.filter(word=>word.start>=first.start&&word.start<=until);
+}
+function renderUpcoming(position){
+  const root=$('#reading-preview');root.hidden=state.follow==='off';if(root.hidden)return;
+  const upcoming=upcomingWords(position),key=upcoming.map(word=>word.id).join(':');
+  if(state.upcomingKey===key)return;state.upcomingKey=key;root.replaceChildren();
+  const label=document.createElement('span');label.textContent=upcoming.length?'Далее: ':'Конец партии';root.append(label);
+  for(const word of upcoming){const node=document.createElement('span');node.textContent=word.text;node.dataset.wordId=word.id;root.append(node);}
+}
 function layoutTimelineLabels(ctx,{width,height,startTime,endTime,position,noteBoxes}){
+  if(state.follow!=='off')return readingLabelLayout(ctx,{width,height,startTime,endTime});
   const presentation=timelinePresentation(),scroll=$('#timeline-scroller'),pps=pixelsPerSecond();
   const key=[scroll.scrollLeft,scroll.scrollTop,width,height,state.zoom,state.heightZoom,state.midiMax,state.baseRow,state.selectedWord,state.selectedRegion?.note.id].join(':');
   // Keep placement stable on a stationary view. Reconsider a hidden current
@@ -595,7 +677,7 @@ function drawTimeline(position){
   const canvas=$('#timeline-canvas'),ctx=canvas.getContext('2d'),{width,height}=setupCanvas(ctx,canvas),scroller=$('#timeline-scroller'),pps=pixelsPerSecond(),keyboard=74,startTime=Math.max(0,scroller.scrollLeft/pps),endTime=startTime+(width-keyboard)/pps;
   ctx.clearRect(0,0,width,height);ctx.fillStyle='#090c11';ctx.fillRect(0,0,width,height);
   ctx.save();ctx.beginPath();ctx.rect(keyboard,110,width-keyboard,height-110);ctx.clip();
-  for(let midi=state.midiMin;midi<=state.midiMax;midi++){
+  for(let midi=timelineRange().min;midi<=timelineRange().max;midi++){
     const y=midiY(midi+.5),row=rowHeight();if(y+row<80||y>height)continue;
     ctx.fillStyle=[1,3,6,8,10].includes(midi%12)?'rgba(255,255,255,.018)':'rgba(255,255,255,.035)';ctx.fillRect(keyboard,y,width-keyboard,row);ctx.strokeStyle='rgba(255,255,255,.055)';ctx.beginPath();ctx.moveTo(keyboard,y);ctx.lineTo(width,y);ctx.stroke();
   }
@@ -632,18 +714,27 @@ function drawTimeline(position){
   for(const label of labelLayout.labels){
     ctx.strokeStyle='#8587f7';ctx.beginPath();ctx.moveTo(label.noteX+3,Math.max(110,label.noteY));ctx.lineTo(label.x+3,label.y+2);ctx.stroke();
     ctx.fillStyle='#111827';ctx.fillRect(label.x,label.y-12,label.measured+8,16);
-    ctx.fillStyle=label.missing?'#aeb5c4':'#f4f6fb';ctx.font='500 12px -apple-system,sans-serif';ctx.fillText(label.text,label.x+4,label.y);
+    ctx.fillStyle=label.missing?'#aeb5c4':'#f4f6fb';ctx.font='500 12px -apple-system,sans-serif';
+    if(state.follow==='off')ctx.fillText(label.text,label.x+4,label.y);
+    else drawReadingText(ctx,label.text,label.x+4,label.y,ctx.font,ctx.fillStyle);
   }
   $('#label-density-hint').hidden=!labelLayout.crowded;
   ctx.restore();
   ctx.save();ctx.beginPath();ctx.rect(0,110,keyboard,height-110);ctx.clip();ctx.fillStyle='#0d1015';ctx.fillRect(0,110,keyboard,height-110);
-  for(let midi=state.midiMin;midi<=state.midiMax;midi++){const y=midiY(midi+.5),row=rowHeight();if(y+row<80||y>height)continue;const black=[1,3,6,8,10].includes(midi%12);ctx.fillStyle=black?'#161a21':'#e5e7eb';ctx.fillRect(0,y,72,row);if(black){ctx.fillStyle='#242b38';ctx.fillRect(0,y,44,row);}ctx.strokeStyle='#303541';ctx.strokeRect(0,y,72,row);if(row>=10||midi%12===0){ctx.fillStyle=black?'#e5e7eb':'#252a34';ctx.font='10px -apple-system,sans-serif';ctx.fillText(noteName(midi),47,y+row/2+3);}}
+  for(let midi=timelineRange().min;midi<=timelineRange().max;midi++){const y=midiY(midi+.5),row=rowHeight();if(y+row<80||y>height)continue;const black=[1,3,6,8,10].includes(midi%12);ctx.fillStyle=black?'#161a21':'#e5e7eb';ctx.fillRect(0,y,72,row);if(black){ctx.fillStyle='#242b38';ctx.fillRect(0,y,44,row);}ctx.strokeStyle='#303541';ctx.strokeRect(0,y,72,row);if(row>=10||midi%12===0){ctx.fillStyle=black?'#e5e7eb':'#252a34';ctx.font='10px -apple-system,sans-serif';ctx.fillText(noteName(midi),47,y+row/2+3);}}
   ctx.restore();
   // The ruler and waveform stay fixed vertically and share the timeline x-axis.
   ctx.fillStyle='#0d1015';ctx.fillRect(0,0,width,80);ctx.save();ctx.beginPath();ctx.rect(keyboard,0,width-keyboard,80);ctx.clip();
   for(let second=Math.floor(startTime);second<=endTime+1;second++){if(second%(pps>100?1:5)!==0)continue;const x=keyboard+second*pps-scroller.scrollLeft;ctx.fillStyle='#aeb5c4';ctx.font='11px -apple-system,sans-serif';ctx.fillText(formatTime(second,false),x+5,18);}
   ctx.strokeStyle='rgba(133,135,247,.65)';ctx.beginPath();for(let x=keyboard;x<width;x++){const time=startTime+(x-keyboard)/pps,index=Math.floor(time/state.duration*state.peaks.length),peak=state.peaks[index]||0;ctx.moveTo(x,35-peak*10);ctx.lineTo(x,35+peak*10);}ctx.stroke();
   // The lyric lane is independent of detected notes and vertical pitch scroll.
+  if(state.follow!=='off'){
+    for(const label of readingWordsLayout(ctx)){
+      const x=label.x-scroller.scrollLeft;
+      if(x+label.measured<keyboard||x>width)continue;
+      drawReadingText(ctx,label.text,x+3,label.y,'500 12px -apple-system,sans-serif',label.word.id===activeWord?.id?'#b7b9ff':'#e5e7eb');
+    }
+  }else{
   const lyricLanes=[-Infinity,-Infinity];
   for(const word of state.words){
     if(!Number.isFinite(word.start)||!Number.isFinite(word.end)||word.end<startTime||word.start>endTime)continue;
@@ -651,6 +742,7 @@ function drawTimeline(position){
     ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width,lane=lyricLanes[0]<=x?0:lyricLanes[1]<=x?1:-1;
     if(lane<0||x+measured+6>width)continue;
     ctx.fillStyle=word.id===activeWord?.id?'#b7b9ff':'#e5e7eb';ctx.fillText(text,x+3,60+lane*15);lyricLanes[lane]=x+measured+8;
+  }
   }
   ctx.restore();
   const playX=keyboard+position*pps-scroller.scrollLeft;if(playX>=keyboard){ctx.strokeStyle='#58d8ff';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(playX,0);ctx.lineTo(playX,height);ctx.stroke();ctx.lineWidth=1;}

@@ -25,10 +25,15 @@
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
       <span>VocalCreator <strong>Studio</strong> <small class="version-label">0.1</small></span>
     </a>
-    <nav aria-label="Режимы приложения">
-      <a class="nav-link active" href="/" aria-current="page">Студия</a>
-      <a class="nav-link" href="/karaoke">Karaoke MP4</a>
-    </nav>
+    <div class="symbol-legend" aria-label="Обозначения партии">
+      <span title="Приблизительная нота, время или граница части"><b>≈</b> приблизительно</span>
+      <span title="Продолжение слова или распева; в старых подписях также —"><b>─</b> продолжение</span>
+      <span title="Временные связи слов перекрываются"><b>?</b> спорная граница</span>
+      <span title="Соседнее слово лирики, не подтверждённое на этом участке"><b>к</b> контекст</span>
+      <span title="Точная часть слова не определена, показано полное слово"><b>…</b> часть неизвестна</span>
+      <span title="Нет связи с текстом или определимой ноты"><b>∅</b> нет связи</span>
+      <span><i class="legend-note"></i> нота</span><span><i class="legend-pitch"></i> высота голоса</span>
+    </div>
     <div id="connection" class="connection" role="status"><span></span>Локальный сервис</div>
   </header>
 
@@ -110,6 +115,11 @@
         <label class="seek-control"><span class="sr-only">Позиция воспроизведения</span><input id="seek-slider" type="range" min="0" max="1" step="0.001" value="0" disabled></label>
         <label class="speed-control" for="speed-select"><span>Скорость</span><select id="speed-select" disabled aria-describedby="speed-status"><option value="0.25">0,25×</option><option value="0.5">0,5×</option><option value="0.75">0,75×</option><option value="1" selected>1×</option><option value="1.25">1,25×</option><option value="1.5">1,5×</option><option value="1.75">1,75×</option><option value="2">2×</option></select></label>
         <label class="zoom-control" for="zoom-slider"><span>По времени</span><input id="zoom-slider" type="range" min="0.5" max="32" step="0.25" value="1" disabled><output id="zoom-value">1×</output></label>
+          <div class="karaoke-controls">
+            <label class="karaoke-toggle"><input id="karaoke-toggle" type="checkbox" aria-describedby="karaoke-status"><span>Режим караоке</span></label>
+            <span id="karaoke-status" class="sr-only">Автоследование за словами и нотами</span>
+            <button id="karaoke-return" type="button" aria-hidden="true" disabled>К исполнению</button>
+          </div>
       </div>
       <p id="speed-status" class="transport-status info" role="status" aria-live="polite" hidden></p>
       <p id="transport-status" class="transport-status" role="status" aria-live="assertive" hidden></p>
@@ -130,27 +140,11 @@
           <div><h2 id="result-title">Вокальная партия</h2><p id="result-summary"></p></div>
           <div id="downloads" class="downloads" aria-label="Скачать результаты"></div>
         </div>
-        <div class="learning-controls">
-          <fieldset class="learning-modes" aria-describedby="learning-explanation learning-status">
-            <legend>Подробность мелодии</legend>
-            <label><input type="radio" name="learning-mode" value="light"><span>Light</span></label>
-            <label><input type="radio" name="learning-mode" value="medium"><span>Medium</span></label>
-            <label><input type="radio" name="learning-mode" value="pro"><span>Pro</span></label>
-          </fieldset>
-          <div class="learning-copy">
-            <strong id="active-mode">Исходный разбор</strong>
-            <p id="learning-explanation">Подготовка учебных режимов из сохранённых данных.</p>
-            <p id="learning-status" role="status" aria-live="polite" hidden></p>
-          </div>
-        </div>
+        <p id="learning-status" class="transport-status info" role="status" aria-live="polite" hidden></p>
         <div id="v3-preparation" class="v3-preparation"><p>Исходные ноты и полный текст уже доступны. Подготовьте части слов для разучивания.</p><button id="prepare-v3" type="button">Подготовить части слов</button></div>
         <div class="scale-controls">
           <label class="zoom-control" for="height-slider"><span>Высота нот</span><input id="height-slider" type="range" min="1" max="6" step="0.25" value="1" disabled><output id="height-value">1×</output></label>
-          <div class="karaoke-controls">
-            <label class="karaoke-toggle"><input id="karaoke-toggle" type="checkbox" aria-describedby="karaoke-status"><span>Режим караоке</span></label>
-            <span id="karaoke-status">Автоследование за словами и нотами</span>
-            <button id="karaoke-return" type="button" aria-hidden="true" disabled>Вернуться к воспроизведению</button>
-          </div>
+
         </div>
         <section id="note-inspector" class="note-inspector" aria-label="Текущая нота и слово">
           <div class="inspector-copy">
@@ -161,10 +155,10 @@
           <div class="inspector-word">
             <span>Слово</span>
             <strong id="inspector-word">Нет слова</strong>
-            <small id="inspector-word-status">Связь с нотой отсутствует.</small>
+            <small id="inspector-word-status" aria-label="Связь с нотой отсутствует">∅</small>
             <div id="inspector-context" class="inspector-context" aria-label="Предыдущее и следующие слова"><span id="word-previous"></span><span id="word-next"></span><span id="word-after-next"></span></div>
           </div>
-          <div class="inspector-nav" aria-label="Переход между нотами выбранного режима">
+          <div class="inspector-nav" aria-label="Переход между нотами">
             <button id="previous-note" type="button" disabled aria-label="Предыдущая нота">Предыдущая</button>
             <output id="inspector-position" aria-live="polite">0 / 0</output>
             <button id="next-note" type="button" disabled aria-label="Следующая нота">Следующая</button>
@@ -175,6 +169,7 @@
           <div class="dialog-heading"><h2 id="inspector-dialog-title">Нота и связь с текстом</h2><button id="inspector-close" type="button" autofocus>Закрыть</button></div>
           <p id="inspector-note-detail"></p><p id="inspector-word-detail"></p><p id="inspector-region-detail"></p>
         </dialog>
+        <div id="reading-preview" class="reading-preview" aria-label="Следующие слова" hidden></div>
         <p id="timeline-semantic-summary" class="sr-only">График доступен через панель текущей ноты. Кнопки «Предыдущая» и «Следующая» последовательно открывают каждую распознанную ноту, включая короткие.</p>
         <div id="timeline-scroller" class="timeline-scroller" tabindex="0" aria-label="Прокручиваемая шкала нот и слов">
           <div id="timeline-spacer" class="timeline-spacer"><canvas id="timeline-canvas" tabindex="0" aria-label="График высоты, нот и слов" aria-describedby="timeline-semantic-summary note-inspector"></canvas></div>

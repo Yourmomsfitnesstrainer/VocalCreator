@@ -14,14 +14,6 @@ root = Path(__file__).resolve().parents[1]
 output = root/'output/timing-verification/probes'
 output.mkdir(parents=True, exist_ok=True)
 probes = [
-    ('reachability', 'subtitles.py', '    parts: list[str] = []',
-     '    raise RuntimeError("probe reached karaoke generation")\n    parts: list[str] = []',
-     'tests/test_subtitles.py::test_absolute_boundaries_do_not_accumulate_rounding'),
-    ('fill-includes-pause', 'subtitles.py', '        end_cs = round((word.end + offset) * 100)',
-     '        end_cs = round((max(word.end, line.words[index+1].start if index+1 < len(line.words) else word.end) + offset) * 100)',
-     'tests/test_media_timing.py::test_frames_and_decoded_audio_preserve_word_boundaries[0]'),
-    ('negative-time-restart', 'subtitles.py', '{start_cs - origin_cs}', '{max(0, start_cs - origin_cs)}',
-     'tests/test_media_timing.py::test_frames_and_decoded_audio_preserve_word_boundaries[-250]'),
     ('low-score-accepted', 'alignment.py', 'or score < min_score:', 'or score < 0:',
      'tests/test_alignment.py::test_rejected_refinement_preserves_asr_and_reason'),
     ('input-normalization-skipped', 'alignment.py', 'if feature_extractor is None:', 'if True:',

@@ -20,25 +20,10 @@ def _candidate_ffmpeg_paths() -> list[str]:
     return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 
-def ffmpeg_has_ass(path: str) -> bool:
-    result = subprocess.run(
-        [path, "-hide_banner", "-filters"], capture_output=True, text=True, check=False
-    )
-    filters = result.stdout + result.stderr
-    return any(line.split()[1:2] == ["ass"] for line in filters.splitlines() if line.strip())
-
-
-def find_ffmpeg(require_ass: bool = False) -> str:
+def find_ffmpeg() -> str:
     for candidate in _candidate_ffmpeg_paths():
-        if not Path(candidate).exists():
-            continue
-        if not require_ass or ffmpeg_has_ass(candidate):
+        if Path(candidate).exists():
             return candidate
-    if require_ass:
-        raise RuntimeError(
-            "FFmpeg with the libass 'ass' filter was not found. On macOS run "
-            "`brew install ffmpeg-full`, or set KARAOKE_FFMPEG to a compatible binary."
-        )
     raise RuntimeError("FFmpeg was not found. Install it or set KARAOKE_FFMPEG.")
 
 
@@ -187,14 +172,11 @@ def _compare_timeline(reference, candidate) -> dict:
             'method': 'decoded_pcm_2000hz_normalized_correlation_three_regions'}
 
 
-def timeline_report(original: Path, source: Path, vocals: Path, instrumental: Path | None,
-                    *, video_path: Path | None = None) -> dict:
+def timeline_report(original: Path, source: Path, vocals: Path, instrumental: Path | None) -> dict:
     from .timing_cache import file_sha256
     paths = {'original': original, 'source': source, 'vocals': vocals}
     if instrumental:
         paths['instrumental'] = instrumental
-    if video_path:
-        paths['mp4'] = video_path
     report = {'streams': {key: probe_timeline(path) for key, path in paths.items()}, 'checks': {}}
     try:
         source_pcm = _decode_for_timeline(source)
@@ -209,8 +191,6 @@ def timeline_report(original: Path, source: Path, vocals: Path, instrumental: Pa
         else:
             report['checks']['vocals'] = ({'status': 'verified', 'method': 'identical_file_sha256'}
                 if file_sha256(source) == file_sha256(vocals) else _compare_timeline(source_pcm, _decode_for_timeline(vocals)))
-        if video_path:
-            report['checks']['mp4_audio'] = _compare_timeline(source_pcm, _decode_for_timeline(video_path))
     except ImportError:
         report['checks']['pcm'] = {'status': 'inconclusive', 'reason': 'numpy_unavailable'}
     failures = [key for key, value in report['checks'].items() if value['status'] == 'mismatch']

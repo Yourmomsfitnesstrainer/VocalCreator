@@ -28,18 +28,21 @@ def crop(source: Path, destination: Path, start: float, end: float):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("result", type=Path)
-    parser.add_argument("--output", type=Path, default=ROOT / "output/v2-qa/listening")
+    parser.add_argument("--output", type=Path, default=ROOT / "output/listening")
     args = parser.parse_args()
-    from karaoke_generator.config import load_config
-    from karaoke_generator.learning_storage import prepare_learning
+    from karaoke_generator.v3_storage import ready_modes
     from karaoke_generator.timing_cache import file_sha256
     args.output.mkdir(parents=True, exist_ok=True)
     melody = json.loads((args.result / "melody.json").read_text())
     notes, duration = melody["notes"], melody["timeline"]["duration"]
     if len(notes) < 8 or duration < 48:
         raise SystemExit("Choose a result with at least eight notes and 48 seconds of material")
-    modes = {mode: prepare_learning(args.result, mode, piano_options=load_config().get("piano"))[1] / "piano.wav"
-             for mode in ("light", "medium", "pro")}
+    manifest = json.loads((args.result / "studio.json").read_text())
+    ready = ready_modes(args.result, set(manifest["artifacts"]))
+    full = next((ready[mode] for mode in ("pro", "light", "medium") if mode in ready), None)
+    if full is None:
+        raise SystemExit("Prepare the full melody in the studio before creating listening candidates")
+    piano = args.result / "learning-v3" / full["cache_key"] / "piano.wav"
     starts = []
     for fraction in (.03, .15, .27, .39, .51, .63, .75, .90):
         start = max(0, min(duration - 6, notes[round((len(notes) - 1) * fraction)]["start"] - 1))
@@ -53,7 +56,7 @@ def main():
         identifier = f"fragment-{index + 1:02d}"
         end = min(duration, start + 6)
         artifacts = {}
-        for kind, path in {"vocal": args.result / "vocals.wav", **modes}.items():
+        for kind, path in {"vocal": args.result / "vocals.wav", "full": piano}.items():
             filename = f"{identifier}-{kind}.wav"
             crop(path, args.output / filename, start, end)
             artifacts[kind] = filename
@@ -64,7 +67,7 @@ def main():
                   "false_jumps": None, "comment": ""}
         manifest["fragments"].append(record)
         audio = ''.join(f'<label>{label}<audio controls preload="none" src="{artifacts[kind]}"></audio></label>'
-                        for kind, label in (("light", "Light"), ("medium", "Medium"), ("pro", "Pro")))
+                        for kind, label in (("full", "Полная мелодия"),))
         rows.append(f'<section><h2>{identifier} · {start:.3f}–{end:.3f} с · {record["split"]}</h2>'
                     f'<label>Исходный вокал<audio controls preload="none" src="{artifacts["vocal"]}"></audio></label>'
                     f'<label>Независимые границы и высоты; паузы и атаки<textarea data-id="{identifier}" placeholder="Времена относительно начала этого фрагмента. Не копируйте автоматические ноты."></textarea></label>'
@@ -72,10 +75,10 @@ def main():
                     '<p>Легче ли следовать нотам? Узнаётся ли мелодия? Есть ли ложные скачки?</p></details></section>')
     (args.output / "annotations.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     html = '''<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>VocalCreator — музыкальная приёмка v2</title><style>body{font:16px/1.5 system-ui;background:#0d1015;color:#f4f6fb;max-width:900px;margin:auto;padding:24px}section{border-top:1px solid #424958;padding:20px 0}h2{font-size:18px}label{display:block;margin:12px 0}audio,textarea{display:block;width:100%;margin-top:8px}textarea{min-height:90px;background:#191e28;color:#f4f6fb}summary,button{cursor:pointer;padding:12px}button{font:inherit}</style>
-<h1>Музыкальная приёмка v2</h1><p>Это восемь кандидатов из вашей песни. Их музыкальный тип и правильные ноты ещё не подтверждены. Сначала разметьте исходный вокал, затем сравните режимы. Первые четыре фрагмента предназначены для калибровки, последние четыре — для отдельной проверки.</p>
+<title>VocalCreator — музыкальная приёмка полной мелодии</title><style>body{font:16px/1.5 system-ui;background:#0d1015;color:#f4f6fb;max-width:900px;margin:auto;padding:24px}section{border-top:1px solid #424958;padding:20px 0}h2{font-size:18px}label{display:block;margin:12px 0}audio,textarea{display:block;width:100%;margin-top:8px}textarea{min-height:90px;background:#191e28;color:#f4f6fb}summary,button{cursor:pointer;padding:12px}button{font:inherit}</style>
+<h1>Музыкальная приёмка полной мелодии</h1><p>Это восемь кандидатов из вашей песни. Их музыкальный тип и правильные ноты ещё не подтверждены. Сначала разметьте исходный вокал, затем сравните полную мелодию. Первые четыре фрагмента предназначены для калибровки, последние четыре — для отдельной проверки.</p>
 <p>Для полного ТЗ проверьте покрытие: вибрато, портаменто, мелизм, повторная атака, короткое и длинное слово, внутренняя пауза, неточная привязка. Если явления нет в этих кандидатах, выберите другой участок; отсутствие нельзя засчитывать как проверку.</p>
-''' + ''.join(rows) + '''<button id="save">Скачать введённую разметку</button><script>document.querySelector('#save').onclick=()=>{const data=[...document.querySelectorAll('textarea')].map(n=>({id:n.dataset.id,human_annotation:n.value}));const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));a.download='human-annotations-v2.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};</script></html>'''
+''' + ''.join(rows) + '''<button id="save">Скачать введённую разметку</button><script>document.querySelector('#save').onclick=()=>{const data=[...document.querySelectorAll('textarea')].map(n=>({id:n.dataset.id,human_annotation:n.value}));const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));a.download='human-annotations.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);};</script></html>'''
     (args.output / "index.html").write_text(html)
     print(json.dumps({"output": str(args.output), "fragments": len(starts), "source_starts": starts,
                       "human_labels": "not provided; left blank"}))

@@ -71,21 +71,23 @@ async function runBrowserChecks(){
   await check('M7-M8: actual source replacement, latest result and failure rollback',async()=>{
     const originalFetch=window.fetch.bind(window),realDecode=context.decodeAudioData.bind(context);
     const payload=mode=>({mode,notes:[{id:mode,start:0,end:1,midi:60,cents:0,confidence:.9,intervals:[{start:0,end:1}]}],words:[],word_note_links:[],diagnostics:{},artifacts:{'piano.wav':`/__calibration-${mode}.wav`,'learning.json':'/__calibration.json'}});
-    let delayed;
+    let delayed,requests=0,fail=false;
     window.fetch=async(url,options)=>{
-      if(String(url).includes('/v3/light'))return new Promise(resolve=>{delayed=()=>resolve({ok:true,json:async()=>payload('light')});});
-      if(String(url).includes('/v3/medium'))throw Error('mode-prepare-failed');
-      if(String(url).includes('/v3/pro'))return {ok:true,json:async()=>payload('pro')};
+      if(String(url).endsWith('/melody')){
+        if(fail)throw Error('melody-prepare-failed');
+        if(++requests===1)return new Promise(resolve=>{delayed=()=>resolve({ok:true,json:async()=>payload('stale')});});
+        return {ok:true,json:async()=>payload('full')};
+      }
       if(String(url).endsWith('.wav'))return {ok:true,arrayBuffer:async()=>new ArrayBuffer(0)};
       return originalFetch(url,options);
     };
     context.decodeAudioData=async()=>buffer;
     try{
       state.position=150;await play();const vocals=state.sources.vocals,backing=state.sources.instrumental,old=state.sources.piano;
-      const pending=requestMode('light');await requestMode('pro');delayed();await pending;
-      assert(state.mode==='pro'&&state.learning.notes[0].id==='pro','Late Light won');assert(state.sources.vocals===vocals&&state.sources.instrumental===backing,'Voice/backing restarted');assert(state.sources.piano!==old,'Piano not replaced');
-      const piano=state.sources.piano;await requestMode('medium');assert(state.mode==='pro'&&state.sources.piano===piano,'Failed mode replaced active source');pause();
-      state.position=123;await play();const scheduled=starts.at(-3);await requestMode('pro');const replacement=starts.at(-1);
+      const pending=requestMode('full');await requestMode('full');delayed();await pending;
+      assert(state.mode==='full'&&state.learning.notes[0].id==='full','Late preparation won');assert(state.sources.vocals===vocals&&state.sources.instrumental===backing,'Voice/backing restarted');assert(state.sources.piano!==old,'Piano not replaced');
+      const piano=state.sources.piano;state.modeCache.clear();fail=true;await requestMode('full');assert(state.mode==='full'&&state.sources.piano===piano,'Failed preparation replaced active source');fail=false;pause();
+      state.position=123;await play();const scheduled=starts.at(-3);await requestMode('full');const replacement=starts.at(-1);
       assert(replacement.when>=scheduled.when,'Cached piano started before the common scheduled start');
       const switchError=Math.abs((replacement.offset-replacement.when)-(scheduled.offset-scheduled.when))*1000;
       report.measurements.mode_switch_timeline_error_ms=switchError;
@@ -267,7 +269,7 @@ async function runReadingChecks(){
   await check('A08-A12: real audio follow at all rates/modes, manual suspend, return and clock',async()=>{
     frameAt(139.3,16,4);$('#next-note').focus();const focus=document.activeElement,workspaceTop=$('#main-workspace').scrollTop,lyricsTop=$('#full-lyrics').scrollTop;
     setKaraoke(true);assert(!state.playing,'Enabling started audio');assert(document.activeElement===focus,'Follow stole focus');
-    const pairs=new URLSearchParams(location.search).has('full')?[['light',.25],['light',.5],['light',1],['light',2],['medium',.5],['medium',1],['pro',.5],['pro',1]]:[[state.mode,1]];
+    const pairs=new URLSearchParams(location.search).has('full')?[['full',.25],['full',.5],['full',1],['full',2]]:[['full',1]];
     let maxClock=0,minY=Infinity,maxY=-Infinity,lastCursorX=null;
     const move=ctx.moveTo;ctx.moveTo=function(x,y){if(this.strokeStyle==='#58d8ff'&&this.lineWidth===2&&y===0)lastCursorX=x;return move.call(this,x,y);};
     try {
@@ -287,7 +289,7 @@ async function runReadingChecks(){
       assert(state.playing,'Manual pan stopped audio');$('#karaoke-return').click();assert(state.follow==='following'&&state.playing,'Return changed playback');pause();
     }
     report.measurements.follow_error_css_px=maxClock;report.measurements.follow_pitch_y=[minY,maxY];report.measurements.audio_pairs=pairs;
-    assert($('#main-workspace').scrollTop===workspaceTop&&$('#full-lyrics').scrollTop===lyricsTop,'Follow moved outside timeline');
+    assert($('#full-lyrics').scrollTop===lyricsTop,'Follow moved the lyrics view');
     const x=scroll.scrollLeft,y=scroll.scrollTop;await wait(100);assert(scroll.scrollLeft===x&&scroll.scrollTop===y,'Pause kept moving');
     // Native bar scroll is delivered asynchronously; detect it before the next frame.
     scroll.scrollLeft+=60;await wait(40);assert(state.follow==='suspended','Native scroll did not suspend');
@@ -302,12 +304,38 @@ async function runReadingChecks(){
     await requestMode(initialMode);await requestRate(1);assert(state.canonicalText===canonical,'Canonical text changed');assert(state.words.length===305,'Word occurrence lost');
     assert(JSON.stringify(state.modeCache.get(initialMode).data)===sourceJSON,'Source learning JSON changed');
     assert($('#full-lyrics').textContent===canonical,'Accessible text changed');
-    frameAt(139.3,16,3);const workspace=$('#main-workspace');workspace.scrollTop=$('.scale-controls').offsetTop-workspace.offsetTop-$('.transport').offsetHeight;
+    setKaraoke(false);frameAt(139.3,16,3);const workspace=$('#main-workspace');workspace.scrollTop=$('.scale-controls').offsetTop-workspace.offsetTop-$('.transport').offsetHeight;
     await wait(30);
-    for(const selector of ['#karaoke-toggle','#height-slider','#karaoke-status','#inspector-more']){const r=$(selector).getBoundingClientRect();assert(r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight,`${selector} inaccessible at desktop size`);}
+    for(const selector of ['#karaoke-toggle','#height-slider','#inspector-more']){const r=$(selector).getBoundingClientRect();assert(r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight,`${selector} inaccessible at desktop size`);}
     report.measurements.controls_visible=true;report.measurements.panel_height=$('#note-inspector').getBoundingClientRect().height;
   });
-  pause();setKaraoke(oldFollow);await requestRate(1);frameAt(139.3,16,3);
+  await check('BL006-BL009: fixed glyph raster, continuous camera, expanded score and advance reading',async()=>{
+    setKaraoke(true);setZoom(16,3);seek(139.3);
+    const before=JSON.stringify(activeNotes()),dpr=Math.min(2,devicePixelRatio||1),glyphs=[];
+    const image=ctx.drawImage;ctx.drawImage=function(...args){glyphs.push(args);return image.apply(this,args);};
+    try{
+      drawAll();const layout=state.readingLabels,snapshot=JSON.stringify(layout.labels);
+      const vertical=scroll.scrollTop,startX=scroll.scrollLeft;
+      for(let i=0;i<60;i++){state.position=139.3+i*.025;followPosition(state.position);drawAll(state.position);}
+      assert(scroll.scrollLeft>startX,'Continuous following stopped');assert(scroll.scrollTop===vertical,'Pitch view shifted');
+      assert(state.readingLabels===layout&&JSON.stringify(layout.labels)===snapshot,'Labels reflowed with the active word');
+      assert(glyphs.length>0&&glyphs.every(args=>Math.abs(args[1]*dpr-Math.round(args[1]*dpr))<1e-6&&Math.abs(args[2]*dpr-Math.round(args[2]*dpr))<1e-6),'Glyphs moved off device pixels');
+      for(const rate of [.25,.5,1,2]){
+        await requestRate(rate);seek(140);drawAll();
+        assert(((scroll.clientWidth-74)*.65-120)/pixelsPerSecond()/state.rate>=3-1e-6,'Real-time reading horizon below 3 seconds');
+        const ids=upcomingWords(140).map(word=>word.id);
+        assert(ids.length>0&&ids.every(id=>$('#reading-preview').querySelector(`[data-word-id="${id}"]`)),'Next words missing from preview');
+        assert($('#reading-preview').scrollWidth<=$('#reading-preview').clientWidth+1,'Reference preview words overflow');
+      }
+      const rect=scroll.getBoundingClientRect();assert(rect.width>=innerWidth-2,'Sidebar still consumes singing width');assert(rect.bottom<=innerHeight+1&&rect.height>=innerHeight*.6,'Singing canvas does not fit desktop');
+      assert($('#note-inspector').getBoundingClientRect().height<=46,'Singing inspector too large');
+      assert(!document.querySelector('[name="learning-mode"]')&&!document.querySelector('a[href="/karaoke"]'),'Removed UI still present');
+      assert(/^[≈─…∅?к ]*$/u.test($('#inspector-word-status').textContent),'Part repeats status explanations');
+      assert(JSON.stringify(activeNotes())===before,'Display changed notes');
+      report.measurements.reading={canvas:[rect.width,rect.height],continuous:true,glyph_calls:glyphs.length,stable_layout:true,device_pixel_aligned:true,preview_seconds:3};
+    }finally{ctx.drawImage=image;pause();}
+  });
+  pause();await requestRate(1);setKaraoke(true);seek(139.3);
   report.passed=report.checks.every(item=>item.status==='passed');report.completed_at=new Date().toISOString();report.browser=navigator.userAgent;
   output.textContent=JSON.stringify(report,null,2);await fetch('/__checks/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(report)});
 }

@@ -41,7 +41,7 @@ function data(mode){return {mode,notes:[{id:mode,start:0,end:1,midi:60,confidenc
 function modeFetch(h,overrides={}){
   h.env.fetch=async(url)=>{
     if(url.endsWith('.wav'))return {ok:true,arrayBuffer:async()=>({duration:303.726})};
-    const mode=url.split('/').at(-1);
+    const mode='full';
     if(overrides[mode])return overrides[mode];
     return {ok:true,json:async()=>data(mode)};
   };
@@ -84,52 +84,30 @@ test('partial source-start failure stops already scheduled tracks',async()=>{
   assert.equal(h.node('#play-button').attributes['aria-label'],'Воспроизвести');
 });
 
-test('mode commit changes only piano, preserving audio position, view, zoom and mixer',async()=>{
+test('full melody preparation changes only piano and preserves source clock, view and mixer',async()=>{
   const h=harness();modeFetch(h);h.run('state.position=123;state.zoom=3;state.muted.piano=true;state.volumes.vocals=.3');h.node('#timeline-scroller').scrollLeft=700;
   await h.run('play()');const old=h.recorded.slice();h.audio.currentTime+=.25;
-  const before=h.run('currentPosition()');await h.run("requestMode('medium')");
+  const before=h.run('currentPosition()');await h.run("requestMode('full')");
   assert.equal(h.recorded.length,4);assert.equal(old[0].stopped,false);assert.equal(old[2].stopped,false);assert.equal(old[1].stopped,true);
   assert.equal(h.recorded[3].at,h.audio.currentTime);assert.equal(h.recorded[3].offset,before);
   assert.equal(h.run('currentPosition()'),before);assert.equal(h.run('state.zoom'),3);assert.equal(h.node('#timeline-scroller').scrollLeft,700);
-  assert.equal(h.run('state.muted.piano'),true);assert.equal(h.run('state.volumes.vocals'),.3);assert.equal(h.run('activeNotes()[0].id'),'medium');
-  assert.equal(h.storage.get('vocalcreator:mode:job'),'medium');
+  assert.equal(h.run('state.muted.piano'),true);assert.equal(h.run('state.volumes.vocals'),.3);assert.equal(h.run('activeNotes()[0].id'),'full');
+  assert.equal(h.storage.has('vocalcreator:mode:job'),false);
 });
-
-test('cached mode switches preserve the scheduled start and shared timeline before audio begins',async()=>{
-  for(const elapsed of [0,.005,.019,.02,.025]){
-    const h=harness();modeFetch(h);
-    await h.run("requestMode('light')");await h.run("requestMode('pro')");
-    h.run('state.position=123');await h.run('play()');
-    const [vocals,originalPiano,backing]=h.recorded;
-    h.audio.currentTime+=elapsed;
-    for(const mode of ['light','pro']){
-      const previous=h.run('state.sources.piano');await h.run(`requestMode('${mode}')`);
-      assert.equal(h.node('#learning-status').textContent,'');assert.equal(h.run('state.mode'),mode);
-      const piano=h.recorded.at(-1);
-      assert.ok(piano.at>=vocals.at,'replacement must not sound before the common scheduled start');
-      assert.ok(Math.abs((piano.offset-piano.at)-(vocals.offset-vocals.at))<1e-9,'replacement must retain the original audio timeline');
-      assert.equal(previous.stopAt,piano.at);assert.equal(vocals.stopped,false);assert.equal(backing.stopped,false);
-    }
-    assert.equal(originalPiano.stopped,true);h.run('pause()');
-    assert.ok(h.recorded.every(source=>source.stopped));
-  }
+test('late full melody preparation cannot override a newer playback request',async()=>{
+  const h=harness(),late=deferred();modeFetch(h,{full:late.promise});
+  const first=h.run("requestMode('full')");await h.run('requestPlayback(null,1)');
+  late.resolve({ok:true,json:async()=>data('full')});await first;
+  assert.equal(h.run('state.mode'),null);assert.equal(h.run('state.learning'),null);
+  h.env.fetch=async()=>{throw Error('preparation failed');};await h.run("requestMode('full')");
+  assert.equal(h.run('state.mode'),null);assert.match(h.node('#learning-status').textContent,/preparation failed/);
 });
-
-test('last mode wins even when older preparation completes late; failure keeps working mode',async()=>{
-  const h=harness(),late=deferred();modeFetch(h,{light:late.promise});
-  const first=h.run("requestMode('light')");await h.run("requestMode('pro')");
-  late.resolve({ok:true,json:async()=>data('light')});await first;
-  assert.equal(h.run('state.mode'),'pro');assert.equal(h.run('activeNotes()[0].id'),'pro');
-  h.env.fetch=async()=>{throw Error('preparation failed');};await h.run("requestMode('medium')");
-  assert.equal(h.run('state.mode'),'pro');assert.match(h.node('#learning-status').textContent,/preparation failed/);
-});
-
-test('failed piano decode and failed switch scheduling retain old notes and piano',async()=>{
-  const h=harness();modeFetch(h);await h.run("requestMode('light')");await h.run('play()');const old=h.run('state.sources.piano');
-  h.audio.decodeAudioData=async()=>{throw Error('bad WAV');};await h.run("requestMode('medium')");
-  assert.equal(h.run('state.mode'),'light');assert.equal(old.stopped,false);
-  h.audio.decodeAudioData=async value=>value;h.audio.createBufferSource=()=>{throw Error('schedule failed');};await h.run("requestMode('pro')");
-  assert.equal(h.run('state.mode'),'light');assert.equal(old.stopped,false);
+test('full melody decode and scheduling failures preserve the sounding original',async()=>{
+  const h=harness();modeFetch(h);await h.run('play()');const old=h.run('state.sources.piano');
+  h.audio.decodeAudioData=async()=>{throw Error('bad WAV');};await h.run("requestMode('full')");
+  assert.equal(h.run('state.mode'),null);assert.equal(old.stopped,false);
+  h.audio.decodeAudioData=async value=>value;h.audio.createBufferSource=()=>{throw Error('schedule failed');};await h.run("requestMode('full')");
+  assert.equal(h.run('state.mode'),null);assert.equal(old.stopped,false);
 });
 
 test('logical group count and active-note inspector respect sounding gaps',()=>{
@@ -477,9 +455,9 @@ function followHarness(){const h=harness();h.node('#timeline-scroller').scrollWi
 test('A08 karaoke starts off, persists preference, and enabling or returning never starts audio',()=>{
   const h=followHarness();assert.equal(h.run('state.follow'),'off');h.run('setKaraoke(true)');
   assert.equal(h.run('state.follow'),'following');assert.equal(h.storage.get('vocalcreator:karaoke-follow'),'true');assert.equal(h.recorded.length,0);
-  assert.ok(Math.abs(h.node('#timeline-scroller').scrollLeft-(140*224-926*.35))<1e-8);
+  assert.ok(Math.abs(h.node('#timeline-scroller').scrollLeft-(140*h.run('pixelsPerSecond()')-926*.35))<1e-8);
   h.run('suspendFollow()');h.node('#karaoke-return').click();assert.equal(h.run('state.follow'),'following');assert.equal(h.recorded.length,0);
-  const x=h.node('#timeline-scroller').scrollLeft;h.run('setKaraoke(false)');assert.equal(h.node('#timeline-scroller').scrollLeft,x);assert.equal(h.storage.get('vocalcreator:karaoke-follow'),'false');
+  h.run('setKaraoke(false)');assert.equal(h.node('#timeline-scroller').scrollLeft,0);assert.equal(h.storage.get('vocalcreator:karaoke-follow'),'false');
 });
 test('A09 following uses the common source clock at all required rates without rescheduling audio',async()=>{
   for(const rate of [.25,.5,1,2]){
@@ -492,7 +470,7 @@ test('A09 following uses the common source clock at all required rates without r
     h.run('pause()');const x=h.node('#timeline-scroller').scrollLeft;h.audio.currentTime+=10;h.run('tick()');assert.equal(h.node('#timeline-scroller').scrollLeft,x);
   }
 });
-test('A10 vertical safe area follows note events, ignores F0, retains zoom and prioritizes current pitch',()=>{
+test('BL007 entire note range stays visible and vertically fixed while F0 changes',()=>{
   const h=followHarness();h.env.fixtureNotes=[{id:'now',start:139,end:141,midi:60},{id:'high',start:141,end:142,midi:85}];
   h.run('state.learning={notes:fixtureNotes};state.midiMax=90;state.baseRow=12;state.heightZoom=3;setKaraoke(true)');
   const zoom=h.run('state.heightZoom'),y=h.run('midiY(60)');assert.ok(y>110&&y<480);
@@ -533,7 +511,7 @@ test('A12 seek, both zooms, mode, speed and EOF preserve the follow state',async
 });
 test('A13 missing notes still follow time; unavailable storage leaves toggle functional',()=>{
   const h=followHarness();h.env.localStorage.setItem=()=>{throw Error('storage blocked');};h.run('setKaraoke(true);followPosition(160)');
-  assert.equal(h.run('state.follow'),'following');assert.ok(Math.abs(h.node('#timeline-scroller').scrollLeft-(160*224-926*.35))<1e-8);
+  assert.equal(h.run('state.follow'),'following');assert.ok(Math.abs(h.node('#timeline-scroller').scrollLeft-(160*h.run('pixelsPerSecond()')-926*.35))<1e-8);
 });
 
 test('A12 reload retains the toggle but never persists suspended state or starts playback',()=>{
@@ -541,10 +519,10 @@ test('A12 reload retains the toggle but never persists suspended state or starts
   h.run('suspendFollow()');assert.equal(h.storage.get('vocalcreator:karaoke-follow'),'true');
   const reopened=harness([...h.storage]);assert.equal(reopened.run('state.follow'),'following');assert.equal(reopened.recorded.length,0);
 });
-test('A10 reduced motion centers immediately, while notes inside the safe area leave height alone',()=>{
+test('BL007 reduced motion and all pitch transitions retain fixed vertical geometry',()=>{
   const h=followHarness();h.env.window.matchMedia=()=>({matches:true});h.env.fixtureNotes=[{id:'low',start:139,end:141,midi:50},{id:'high',start:141,end:142,midi:85}];
   h.run('state.learning={notes:fixtureNotes};state.midiMax=90;state.baseRow=12;state.heightZoom=3;setKaraoke(true);followPosition(141.5)');
-  assert.ok(Math.abs(h.run('midiY(85)')-295)<1e-8);
+  assert.ok(h.run('midiY(85)')>110&&h.run('midiY(85)')<480);assert.ok(h.run('midiY(50)')<480);
   const top=h.node('#timeline-scroller').scrollTop;h.run('followPosition(141.6)');assert.equal(h.node('#timeline-scroller').scrollTop,top);
 });
 test('A12 background return uses current audio time without scheduling extra sources or a second animation loop',async()=>{
@@ -558,4 +536,51 @@ test('A12 keyboard return keeps its focus target until focus leaves the control'
   const h=followHarness(),button=h.node('#karaoke-return');h.run('setKaraoke(true);suspendFollow()');h.env.document.activeElement=button;button.click();
   assert.equal(h.run('state.follow'),'following');assert.equal(h.env.document.activeElement,button);assert.equal(button.disabled,false);assert.equal(button.attributes['aria-hidden'],'false');
   h.env.document.activeElement=h.node('#karaoke-toggle');button.handlers.blur();assert.equal(button.disabled,true);assert.equal(button.attributes['aria-hidden'],'true');
+});
+
+
+test('BL008 note labels keep world coordinates and lanes while the camera and current word advance',()=>{
+  const h=followHarness();h.env.fixtureWords=Array.from({length:15},(_,i)=>({id:`w${i}`,text:`word-${i}`,start:139+i*.4,end:139.4+i*.4,approximate:false}));
+  h.run(`state.words=fixtureWords;state.learning={notes:fixtureWords.map((word,i)=>({id:'n'+i,start:word.start,end:word.end,midi:60+i%4,labels:[{word_id:word.id,part_id:'p'+i,text:word.text,start:word.start,end:word.end}]}))};setKaraoke(true);drawAll(140)`);
+  const snapshot=h.run('JSON.stringify(state.readingLabels.labels.map(({x,y,text,noteId})=>({x,y,text,noteId})))');
+  const layout=h.run('state.readingLabels');
+  for(const position of [140.001,140.02,140.1,140.45,141,142]){
+    h.run(`followPosition(${position});drawAll(${position})`);
+    assert.equal(h.run('state.readingLabels'),layout,'active word or scroll rebuilt placement');
+    assert.equal(h.run('JSON.stringify(state.readingLabels.labels.map(({x,y,text,noteId})=>({x,y,text,noteId})))'),snapshot);
+  }
+});
+test('BL008 glyph pixels are reused at integral device pixels during fractional scrolling',()=>{
+  for(const dpr of [1,1.25,2]){
+    const h=harness();h.env.window.devicePixelRatio=dpr;const calls=[];
+    h.env.glyphContext={drawImage:(...args)=>calls.push(args)};
+    for(const x of [100,100.01,100.24,100.26,100.75,101.75])h.run(`drawReadingText(glyphContext,'recognise',${x},180.13,'500 12px sans-serif','#fff')`);
+    assert.equal(h.run('state.glyphCache.size'),1);assert.ok(calls.every(call=>call[0]===calls[0][0]));
+    assert.ok(calls.every(call=>Number.isInteger(call[1]*dpr)&&Number.isInteger(call[2]*dpr)));
+    assert.ok(calls.every(call=>call[3]*dpr===call[0].width&&call[4]*dpr===call[0].height),'cached bitmap must not be rescaled');
+    assert.ok(calls.at(-1)[1]>calls[0][1],'text must still move with continuous following');
+  }
+});
+test('BL009 dense continuous words, long words and sustained notes retain a real-time reading horizon',()=>{
+  const h=followHarness();h.env.fixtureWords=Array.from({length:80},(_,i)=>({id:`w${i}`,text:i===2?'supercalifragilisticexpialidocious':`word${i}`,start:140+i*.1,end:140.1+i*.1}));
+  h.run('state.words=fixtureWords;state.learning={notes:[{id:"held",start:140,end:148,midi:60}]};setKaraoke(true)');
+  for(const rate of [.25,.5,1,2])for(const zoom of [.5,8,32]){
+    h.run(`state.rate=${rate};state.zoom=${zoom};resizeTimeline();followPosition(140.05)`);
+    const visibleFuture=h.run('((scroller.clientWidth-74)*.65-120)/pixelsPerSecond()/state.rate');
+    assert.ok(visibleFuture>=3-1e-8);
+    const upcoming=h.run('upcomingWords(140.05).map(word=>word.id)');
+    assert.ok(upcoming.includes('w2'),'long token vanished');
+    assert.ok(upcoming.includes(`w${Math.floor(3*rate/.1)}`),'continuous words not shown ahead');
+    assert.equal(h.run('activeNotes()[0].end'),148);
+  }
+});
+test('BL009 instrumental rest, seek, untimed lyrics and EOF have explicit preview behavior',()=>{
+  const h=followHarness();h.run(`state.words=[{id:'missing',text:'untimed',start:null,end:null},{id:'first',text:'first',start:50,end:55},{id:'next',text:'next',start:55,end:56},{id:'last',text:'last',start:56,end:57}];setKaraoke(true)`);
+  assert.equal(h.run('upcomingWords(0)[0].id'),'first');assert.equal(h.run('upcomingWords(54.9)[0].id'),'next');
+  assert.equal(h.run('upcomingWords(57).length'),0);assert.equal(h.run('upcomingWords(55.1)[0].id'),'last');
+});
+test('BL006 current part contains symbols only; meanings remain accessible',()=>{
+  const h=harness();h.run(`state.words=[{id:'a',text:'sing',start:1,end:3,approximate:true}];state.learning={notes:[{id:'n',midi:60,start:1,end:3,labels:[{word_id:'a',text:'sing',start:1,end:3,fallback:true,approximate:true,continuation:true}]}]};renderInspector(2)`);
+  assert.equal(h.node('#inspector-word').textContent,'sing');assert.match(h.node('#inspector-word-status').textContent,/^[≈─…∅?к ]+$/u);
+  assert.match(h.node('#inspector-word-status').attributes['aria-label'],/Приблизительная/);assert.match(h.node('#inspector-word-detail').textContent,/часть слова/);
 });

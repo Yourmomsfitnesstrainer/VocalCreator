@@ -151,12 +151,6 @@ class MelBandRoformerSeparator:
         )
 
 
-def original_audio_fallback(source: Path, output_dir: Path) -> SeparationResult:
-    vocals = output_dir / "vocals.wav"
-    shutil.copy2(source, vocals)
-    return SeparationResult(vocals, None, "original-audio", {"backend": "original-audio"})
-
-
 def create_separator(config: dict[str, Any]):
     backend = str(config.get("backend", "demucs"))
     if backend == "demucs":

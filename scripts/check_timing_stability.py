@@ -13,8 +13,6 @@ from karaoke_generator.alignment import align_lyrics, WhisperXBackend, ASR_ALGOR
 from karaoke_generator.audio import prepare_audio, probe_duration, find_ffmpeg, run_command
 from karaoke_generator.config import load_config
 from karaoke_generator.lyrics import parse_lyrics_file, parse_lyrics_text
-from karaoke_generator.renderer import render_video
-from karaoke_generator.subtitles import generate_ass
 from karaoke_generator.timing_cache import cached_timing, fingerprint, file_sha256, model_identity, package_versions, write_json, _word_payload, _read_word
 
 
@@ -131,11 +129,6 @@ def run(audio, lyrics, output, language, asr_model, models, contexts):
                 variant['transforms'][name]={**comparison,'seconds':elapsed,'checks':checks}
                 print({k:v for k,v in comparison.items() if k!='rows'},flush=True)
                 write_json(output/'report.json',report)
-            config=load_config()
-            config['karaoke'].update(timing_offset_ms=0,font_size=48,width=1280,height=720)
-            config['video'].update(width=1280,height=720,background='solid')
-            generate_ass(aligned,artifact/'karaoke.ass',config['karaoke'])
-            render_video(artifact/'karaoke.ass',source,artifact/'karaoke.mp4',config['video'],config['output'])
     write_json(output/'report.json',report)
     print(f'Report: {output / "report.json"}',flush=True)
 

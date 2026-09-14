@@ -49,24 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "release_seconds": 0.18,
         "gain": 0.22,
     },
-    "video": {
-        "width": 1920,
-        "height": 1080,
-        "fps": 30,
-        "background": "procedural",
-        "background_color": "#080B1A",
-    },
-    "karaoke": {
-        "font": "Arial",
-        "font_size": 72,
-        "max_lines": 2,
-        "max_chars_per_line": 42,
-        "active_color": "#FFD43B",
-        "inactive_color": "#F2F3F5",
-        "preview_color": "#A7ABB7",
-        "timing_offset_ms": 0,
-    },
-    "output": {"audio_mode": "instrumental", "video_bitrate": "8M", "audio_bitrate": "256k"},
+
 }
 
 

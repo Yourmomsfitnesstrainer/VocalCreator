@@ -8,7 +8,7 @@ tags:
 
 ## Overview
 
-VocalCreator — локальная десктопная вокальная студия, рабочая демка 0.1. Принятая основа: `bfd2665` от 13 сентября 2026 года; прежняя маркировка 0.3 заменена без изменения анализа. Прежний Karaoke MP4 остаётся отдельным режимом.
+VocalCreator — локальная десктопная вокальная студия, рабочая демка 0.1. Принятая основа: `bfd2665` от 13 сентября 2026 года; прежняя маркировка 0.3 заменена без изменения анализа. Karaoke MP4 удалён по BL-004.
 
 ## Content
 
@@ -16,14 +16,13 @@ VocalCreator — локальная десктопная вокальная ст
 
 | Поток | Реализация | Результат |
 |---|---|---|
-| Студия | @src/karaoke_generator/studio.py | separation → alignment → F0 → ноты → пианино, без обязательного MP4 |
+| Студия | @src/karaoke_generator/studio.py | separation → alignment → F0 → ноты → пианино, аудио и текст |
 | Точный текст | @src/karaoke_generator/syllables.py, @src/karaoke_generator/lyric_recovery.py | Все канонические вхождения, CTC-границы, восстановление повторов и provenance |
 | Связи текста и нот | @src/karaoke_generator/learning_v3.py, @src/karaoke_generator/v3_storage.py | Части слов, продолжения, приблизительные и контекстные подписи |
 | Изменение скорости | @src/karaoke_generator/tempo.py | Совместный offline Rubber Band R3 для всех дорожек, неизменная высота |
 | Десктопный плеер | @src/karaoke_generator/static/studio.js | Общий Web Audio clock, три gain/mute, две оси шкалы, полная лирика |
-| Karaoke | @src/karaoke_generator/pipeline.py, @src/karaoke_generator/subtitles.py | Точный TXT → alignment → ASS → MP4 |
 
-Высота и расписание нот вычисляются независимо от количества слов. Текст связывается с нотами, не создавая новые атаки пианино. Light/Medium/Pro пока используют одинаковые стабильные события; различия требуют независимой калибровки.
+Высота и расписание нот вычисляются независимо от количества слов. Текст связывается с нотами, не создавая новые атаки пианино. Клиент показывает единую полную мелодию. Исторические имена режимов остаются только в API и кешах совместимости. В режиме караоке шкала развёрнута на окно, непрерывно следует за текстом и сохраняет растры букв на пиксельной сетке.
 
 ### Состояние и хранение
 
@@ -37,4 +36,4 @@ VocalCreator — локальная десктопная вокальная ст
 
 ## Examples
 
-`karaoke-gen web --host 127.0.0.1 --port 8080` открывает студию в `/`, а Karaoke — в `/karaoke`. Постоянная пара проверяется @scripts/check_reference_song.py; последний полный отчёт — @docs/vocal-studio-text-repair-verification.md.
+`karaoke-gen web --host 127.0.0.1 --port 8080` открывает студию в `/`. Постоянная пара проверяется @scripts/check_reference_song.py; последний полный отчёт — @docs/karaoke-reading-v1.md.

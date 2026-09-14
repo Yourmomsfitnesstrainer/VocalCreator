@@ -1,10 +1,12 @@
 ---
 title: "Контракт генерационного pipeline"
-status: draft
+status: rejected
 tags:
   - "pipeline"
   - "spec"
 ---
+
+Исторический контракт. Karaoke MP4 удалён по BL-004 14 сентября 2026 года; требования ниже больше не действуют. Общие аудио и alignment сохранены в студии.
 
 ## Purpose & Scope
 Спецификация определяет оркестрацию полного локального пути `original MP3 + lyrics.txt → artifacts`. Её потребляют CLI и локальный Web UI.
