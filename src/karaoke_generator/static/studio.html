@@ -144,7 +144,14 @@
           </div>
         </div>
         <div id="v3-preparation" class="v3-preparation"><p>Исходные ноты и полный текст уже доступны. Подготовьте части слов для разучивания.</p><button id="prepare-v3" type="button">Подготовить части слов</button></div>
-        <div class="scale-controls"><label class="zoom-control" for="height-slider"><span>Высота нот</span><input id="height-slider" type="range" min="1" max="6" step="0.25" value="1" disabled><output id="height-value">1×</output></label><p>Колесо: по высоте · Shift + колесо: по времени · PageUp / PageDown: прокрутка</p></div>
+        <div class="scale-controls">
+          <label class="zoom-control" for="height-slider"><span>Высота нот</span><input id="height-slider" type="range" min="1" max="6" step="0.25" value="1" disabled><output id="height-value">1×</output></label>
+          <div class="karaoke-controls">
+            <label class="karaoke-toggle"><input id="karaoke-toggle" type="checkbox" aria-describedby="karaoke-status"><span>Режим караоке</span></label>
+            <span id="karaoke-status">Автоследование за словами и нотами</span>
+            <button id="karaoke-return" type="button" aria-hidden="true" disabled>Вернуться к воспроизведению</button>
+          </div>
+        </div>
         <section id="note-inspector" class="note-inspector" aria-label="Текущая нота и слово">
           <div class="inspector-copy">
             <span>Сейчас</span>
@@ -154,20 +161,27 @@
           <div class="inspector-word">
             <span>Слово</span>
             <strong id="inspector-word">Нет слова</strong>
-            <small id="inspector-word-detail">Связь с нотой отсутствует.</small>
+            <small id="inspector-word-status">Связь с нотой отсутствует.</small>
+            <div id="inspector-context" class="inspector-context" aria-label="Предыдущее и следующие слова"><span id="word-previous"></span><span id="word-next"></span><span id="word-after-next"></span></div>
           </div>
           <div class="inspector-nav" aria-label="Переход между нотами выбранного режима">
             <button id="previous-note" type="button" disabled aria-label="Предыдущая нота">Предыдущая</button>
             <output id="inspector-position" aria-live="polite">0 / 0</output>
             <button id="next-note" type="button" disabled aria-label="Следующая нота">Следующая</button>
+            <button id="inspector-more" type="button" aria-haspopup="dialog">Подробности</button>
           </div>
         </section>
+        <dialog id="inspector-dialog" aria-labelledby="inspector-dialog-title">
+          <div class="dialog-heading"><h2 id="inspector-dialog-title">Нота и связь с текстом</h2><button id="inspector-close" type="button" autofocus>Закрыть</button></div>
+          <p id="inspector-note-detail"></p><p id="inspector-word-detail"></p><p id="inspector-region-detail"></p>
+        </dialog>
         <p id="timeline-semantic-summary" class="sr-only">График доступен через панель текущей ноты. Кнопки «Предыдущая» и «Следующая» последовательно открывают каждую распознанную ноту, включая короткие.</p>
         <div id="timeline-scroller" class="timeline-scroller" tabindex="0" aria-label="Прокручиваемая шкала нот и слов">
           <div id="timeline-spacer" class="timeline-spacer"><canvas id="timeline-canvas" tabindex="0" aria-label="График высоты, нот и слов" aria-describedby="timeline-semantic-summary note-inspector"></canvas></div>
         </div>
         <input id="canvas-seek" class="canvas-seek" type="range" min="0" max="1" step="0.001" value="0" aria-label="Перемотка временной шкалы">
         <div class="overview-wrap"><span>Вся запись</span><canvas id="overview-canvas" aria-label="Обзор всей записи"></canvas></div>
+        <div class="timeline-help"><span id="label-density-hint" hidden>Для остальных подписей увеличьте масштаб.</span><span>Колесо: по высоте · Shift + колесо: по времени · PageUp / PageDown: прокрутка</span></div>
         <div id="timeline-message" class="timeline-message"></div>
         <section class="full-lyrics-section" aria-labelledby="full-lyrics-title"><div class="lyrics-heading"><h3 id="full-lyrics-title">Полный текст</h3><span id="lyrics-summary"></span></div><p class="lyrics-legend">≈ приблизительное время · без ноты: связь не определена. Выберите слово для просмотра.</p><div id="full-lyrics" class="full-lyrics" tabindex="0" aria-label="Все слова исходного текста"></div></section>
       </div>

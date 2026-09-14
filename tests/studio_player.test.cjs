@@ -19,15 +19,15 @@ class Element{
   getContext(){return new Proxy({measureText:text=>({width:text.length*7})},{get:(o,key)=>o[key]||(()=>{}),set:(o,key,value)=>(o[key]=value,true)});}
   click(){return this.handlers.click?.({target:this,currentTarget:this});}
 }
-function harness(){
+function harness(initialStorage=[]){
   const elements=new Map(),radios=['light','medium','pro'].map(value=>{const node=new Element();node.value=value;node.parentElement=new Element();return node;});
   const document=new Element();document.querySelector=s=>{if(!elements.has(s))elements.set(s,new Element());return elements.get(s);};document.querySelectorAll=s=>s==='[name="learning-mode"]'?radios:[];document.createElement=()=>new Element();document.createTextNode=text=>{const node=new Element();node.textContent=text;return node;};
   const recorded=[];
   const audio={currentTime:100,state:'running',resume:async()=>{},createGain:()=>({connect(){},gain:{setTargetAtTime(){}}}),decodeAudioData:async value=>value,
     createBufferSource(){const node={buffer:null,stopped:false,connect(){},disconnect(){},start(at,offset){this.at=at;this.offset=offset;recorded.push(this);},stop(at){this.stopped=true;this.stopAt=at;}};return node;}};
   const buffer={duration:303.726,getChannelData:()=>new Float32Array(100)};
-  const storage=new Map();
-  const env={document,window:{addEventListener(){},devicePixelRatio:1},AbortController,console,
+  const storage=new Map(initialStorage);
+  const env={document,window:{handlers:{},addEventListener(name,fn){this.handlers[name]=fn;},devicePixelRatio:1},AbortController,console,
     requestAnimationFrame:()=>1,cancelAnimationFrame(){},setInterval:()=>1,clearInterval(){},
     localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v)},
     fetch:async()=>({ok:true,json:async()=>({jobs:[]})})};
@@ -157,15 +157,15 @@ test('wheel releases both-axis boundaries, system zoom and fitting content',()=>
   }
 });
 test('Page keys pan vertically, Shift pans time, both zooms preserve anchors and audio time',()=>{
-  const h=harness(),scroll=h.node('#timeline-scroller');scroll.scrollLeft=1000;scroll.scrollTop=500;h.run('state.position=10');
+  const h=harness(),scroll=h.node('#timeline-scroller');scroll.scrollLeft=1000;scroll.scrollTop=500;scroll.scrollWidth=100000;scroll.scrollHeight=100000;h.run('state.position=10');
   scroll.handlers.keydown({key:'PageDown',preventDefault(){},stopPropagation(){}});assert.equal(scroll.scrollTop,900);assert.equal(scroll.scrollLeft,1000);
   scroll.handlers.keydown({key:'PageDown',shiftKey:true,preventDefault(){},stopPropagation(){}});assert.equal(scroll.scrollLeft,1926);
   const center=(scroll.scrollLeft+463)/28;
   h.node('#zoom-slider').handlers.input({target:{value:3}});
   assert.ok(Math.abs((scroll.scrollLeft+463)/84-center)<1e-8);
-  const midi=h.run('state.midiMax+.5-(280+scroller.scrollTop-96)/rowHeight()');
+  const midi=h.run('state.midiMax+.5-(280+scroller.scrollTop-126)/rowHeight()');
   h.node('#height-slider').handlers.input({target:{value:3}});
-  assert.ok(Math.abs(h.run('state.midiMax+.5-(280+scroller.scrollTop-96)/rowHeight()')-midi)<1e-8);
+  assert.ok(Math.abs(h.run('state.midiMax+.5-(280+scroller.scrollTop-126)/rowHeight()')-midi)<1e-8);
   assert.equal(h.run('state.position'),10);
 });
 
@@ -401,4 +401,161 @@ test('melisma drawing across scales leaves canonical data and transport scheduli
   }
   assert.deepEqual(h.recorded,sources);assert.deepEqual(h.recorded.map(node=>[node.at,node.offset]),schedule);
   assert.ok(sources.every(node=>!node.stopped));
+});
+
+function sharedNote(){return {id:'p00279',start:139.26,end:139.72,midi:50,intervals:[{start:139.26,end:139.72}],labels:[
+  {word_id:'when',part_id:'when-p',text:'When',start:139.26,end:139.4241,status:'approximate'},
+  {word_id:'you',part_id:'you-p',text:'you',start:139.555,end:139.72,status:'approximate'}
+]};}
+function sharedCanvas(){
+  const h=melismaCanvas([sharedNote()]);h.run(`state.midiMax=52;state.zoom=16;state.words=[{id:'when',text:'When',start:139.26,end:139.4241,links:[{note_id:'p00279'}]},{id:'you',text:'you',start:139.555,end:139.72,links:[{note_id:'p00279'}]}]`);
+  h.node('#timeline-scroller').scrollLeft=139*448;h.draw(139.3);return h;
+}
+test('A01 real word areas preserve the 0.1309-second sounding gap and original note contour',()=>{
+  const h=sharedCanvas();
+  assert.deepEqual(h.draw(139.3),['≈ When','≈ you']);
+  const regions=h.run('state.timelineHits');
+  assert.deepEqual(Array.from(regions,r=>[r.start,r.end,r.labels[0]?.word_id||null]),[[139.26,139.4241,'when'],[139.4241,139.555,null],[139.555,139.72,'you']]);
+  assert.ok(Math.abs(regions[1].end-regions[1].start-.1309)<1e-10);
+  assert.ok(regions[1].gap);assert.equal(h.bars.length,1);assert.ok(Math.abs(h.bars[0].w-.46*448)<1e-8);
+  assert.equal(h.run('activeNoteIndex(139.5)'),0,'Gap is sounding, not silence');
+});
+test('A02 clicking either word or the gap selects the source note and uses exact pointer time',()=>{
+  const h=sharedCanvas(),canvas=h.node('#timeline-canvas');
+  for(const [time,word] of [[139.3,'when'],[139.5,null],[139.6,'you']]){
+    h.draw(time);const region=h.run(`state.timelineHits.find(r=>r.start<=${time}&&r.end>${time})`);
+    canvas.handlers.click({currentTarget:canvas,clientX:74+(time-139)*448,clientY:(region.y+region.endY)/2});
+    assert.equal(h.run('state.selectedRegion.note.id'),'p00279');assert.equal(h.run('state.selectedWord'),word);
+    assert.ok(Math.abs(h.run('state.position')-time)<1e-9);assert.equal(h.node('#inspector-position').textContent,'1 / 1');
+    if(word)assert.match(h.node('#inspector-region-detail').textContent,new RegExp(`word_id: ${word}`));
+    else {assert.equal(h.node('#inspector-word').textContent,'Нет слова');assert.match(h.node('#inspector-region-detail').textContent,/Звучание продолжается/);}
+  }
+});
+test('A04 all labels stay outside every visible bar, at every time and height scale',()=>{
+  const h=melismaCanvas(threeNoteRun());
+  for(const zoom of [.5,1,4,16,32])for(const height of [1,2,4,6]){
+    h.run(`state.zoom=${zoom};state.heightZoom=${height}`);h.draw(2.5);
+    const labels=h.run('state.labelLayout.labels');
+    for(const label of labels){
+      assert.ok(label.y>=94&&label.x>=74&&label.x+label.measured+8<=1000);
+      for(const bar of h.bars)assert.ok(label.y+4<=Math.max(110,bar.y)||label.y-12>=bar.y+bar.height||label.x>=bar.x+bar.w||label.x+label.measured+8<=bar.x,'Text overlaps a bar');
+    }
+    for(let i=0;i<labels.length;i++)for(let j=i+1;j<labels.length;j++){
+      const a=labels[i],b=labels[j];assert.ok(a.x+a.measured+8<=b.x||b.x+b.measured+8<=a.x||a.y+4<=b.y-12||b.y+4<=a.y-12,'Labels overlap');
+    }
+  }
+});
+test('A04 a crowded group never leaves orphan continuation marks and prioritizes selection',()=>{
+  const notes=Array.from({length:20},(_,i)=>melismaNote(String(i),1+i*.04,1+(i+1)*.04,{word:`w${Math.floor(i/2)}`,part:`p${Math.floor(i/2)}`,text:`long-word-${Math.floor(i/2)}`,continuation:i%2===1}));
+  const h=melismaCanvas(notes);h.run("state.zoom=.5;state.selectedWord='w8'");const copy=h.draw(1.1);
+  assert.ok(copy.some(text=>text.includes('long-word-8')));assert.ok(h.run('state.labelLayout.crowded'));
+  const labels=h.run('state.labelLayout.labels');
+  for(const label of labels.filter(label=>label.text==='─'))assert.ok(labels.some(anchor=>anchor.wordId===label.wordId&&anchor.text!=='─'));
+});
+test('A06 word and neighbor DOM text is retained across notes of the same word',()=>{
+  const h=melismaCanvas(threeNoteRun());h.run(`state.words=[{id:'before',text:'before'},{id:'w',text:'mama!',start:1,end:4,links:[]},{id:'next',text:'after'},{id:'later',text:'later'}];renderInspector(1.5)`);
+  let writes=0,value=h.node('#inspector-word').textContent;
+  Object.defineProperty(h.node('#inspector-word'),'textContent',{get:()=>value,set:v=>{value=v;writes++;}});
+  h.run('renderInspector(2.5);renderInspector(3.5)');
+  assert.equal(writes,0);assert.equal(h.node('#word-previous').textContent,'before');assert.equal(h.node('#word-next').textContent,'after');assert.equal(h.node('#word-after-next').textContent,'later');
+});
+test('A13 overlap is explicit, keeps both identities and never silently chooses a boundary',()=>{
+  const note=sharedNote();note.labels[1].start=139.35;
+  const h=melismaCanvas([note]);h.run('state.midiMax=52;state.zoom=16');h.node('#timeline-scroller').scrollLeft=139*448;
+  h.draw(139.4);const region=h.run('state.timelineHits.find(r=>r.ambiguous)');
+  assert.equal(region.labels.length,2);assert.ok(h.draw().every(text=>text.startsWith('≈')));
+  h.env.overlap=region;h.run('state.selectedRegion=overlap;renderInspector(139.4)');
+  assert.match(h.node('#inspector-region-detail').textContent,/Спорная|спорная/);assert.match(h.node('#inspector-region-detail').textContent,/When/);assert.match(h.node('#inspector-region-detail').textContent,/you/);
+});
+test('A13 legacy links without timing remain whole with an explicit explanation',()=>{
+  const note=sharedNote();delete note.labels[0].start;
+  const h=melismaCanvas([note]);h.run('state.midiMax=52;state.zoom=16');h.node('#timeline-scroller').scrollLeft=139*448;h.draw();
+  const regions=h.run('state.timelineHits');assert.equal(regions.length,1);assert.equal(regions[0].undivided,true);
+  h.run('renderInspector(139.4)');assert.match(h.node('#inspector-region-detail').textContent,/Недостаточно временных связей/);
+});
+function followHarness(){const h=harness();h.node('#timeline-scroller').scrollWidth=300000;h.node('#timeline-scroller').scrollHeight=5000;h.run('state.position=140;state.zoom=8;rememberScroll()');return h;}
+test('A08 karaoke starts off, persists preference, and enabling or returning never starts audio',()=>{
+  const h=followHarness();assert.equal(h.run('state.follow'),'off');h.run('setKaraoke(true)');
+  assert.equal(h.run('state.follow'),'following');assert.equal(h.storage.get('vocalcreator:karaoke-follow'),'true');assert.equal(h.recorded.length,0);
+  assert.ok(Math.abs(h.node('#timeline-scroller').scrollLeft-(140*224-926*.35))<1e-8);
+  h.run('suspendFollow()');h.node('#karaoke-return').click();assert.equal(h.run('state.follow'),'following');assert.equal(h.recorded.length,0);
+  const x=h.node('#timeline-scroller').scrollLeft;h.run('setKaraoke(false)');assert.equal(h.node('#timeline-scroller').scrollLeft,x);assert.equal(h.storage.get('vocalcreator:karaoke-follow'),'false');
+});
+test('A09 following uses the common source clock at all required rates without rescheduling audio',async()=>{
+  for(const rate of [.25,.5,1,2]){
+    const h=followHarness();h.run(`state.rate=${rate};setKaraoke(true)`);await h.run('play()');const sources=h.recorded.slice();
+    for(const dt of [.02,.1,1,3]){
+      h.audio.currentTime+=dt;h.run('tick()');const expected=h.run('74+(scroller.clientWidth-74)*.35');
+      assert.ok(Math.abs(h.run('74+currentPosition()*pixelsPerSecond()-scroller.scrollLeft')-expected)<1e-8);
+      assert.deepEqual(h.recorded,sources);assert.ok(sources.every(source=>!source.stopped));
+    }
+    h.run('pause()');const x=h.node('#timeline-scroller').scrollLeft;h.audio.currentTime+=10;h.run('tick()');assert.equal(h.node('#timeline-scroller').scrollLeft,x);
+  }
+});
+test('A10 vertical safe area follows note events, ignores F0, retains zoom and prioritizes current pitch',()=>{
+  const h=followHarness();h.env.fixtureNotes=[{id:'now',start:139,end:141,midi:60},{id:'high',start:141,end:142,midi:85}];
+  h.run('state.learning={notes:fixtureNotes};state.midiMax=90;state.baseRow=12;state.heightZoom=3;setKaraoke(true)');
+  const zoom=h.run('state.heightZoom'),y=h.run('midiY(60)');assert.ok(y>110&&y<480);
+  const top=h.node('#timeline-scroller').scrollTop;
+  for(const pitch of [0,127,40]){h.run(`state.melody.pitch_frames=[{time:140,midi:${pitch}}];followPosition(140)`);assert.equal(h.node('#timeline-scroller').scrollTop,top);}
+  h.run('followPosition(141.5)');assert.ok(h.run('midiY(85)')>110&&h.run('midiY(85)')<480);assert.equal(h.run('state.heightZoom'),zoom);
+});
+test('A11 actual wheel, native scrollbar and Page movement suspend until explicit return',async()=>{
+  for(const kind of ['wheel','bar','page']){
+    const h=followHarness();h.run('setKaraoke(true)');await h.run('play()');const sources=h.recorded.slice(),scroll=h.node('#timeline-scroller');
+    if(kind==='wheel')scroll.handlers.wheel({deltaX:50,deltaY:0,deltaMode:0,preventDefault(){}});
+    if(kind==='bar'){scroll.scrollLeft+=60;scroll.handlers.scroll();}
+    if(kind==='page')scroll.handlers.keydown({key:'PageDown',shiftKey:true,preventDefault(){},stopPropagation(){}});
+    assert.equal(h.run('state.follow'),'suspended');const x=scroll.scrollLeft;h.audio.currentTime+=20;h.run('tick()');assert.equal(scroll.scrollLeft,x);assert.equal(h.run('state.playing'),true);
+    assert.deepEqual(h.recorded,sources);h.node('#karaoke-return').click();assert.equal(h.run('state.follow'),'following');assert.equal(h.run('state.playing'),true);assert.deepEqual(h.recorded,sources);
+  }
+});
+test('A11 pending native scroll is detected before a following frame can overwrite it',()=>{
+  const h=followHarness();h.run('setKaraoke(true)');h.node('#timeline-scroller').scrollLeft+=60;const x=h.node('#timeline-scroller').scrollLeft;
+  h.run('followPosition(150)');assert.equal(h.run('state.follow'),'suspended');assert.equal(h.node('#timeline-scroller').scrollLeft,x);
+});
+test('A11 programmatic coalesced scroll and system gestures do not suspend follow',()=>{
+  const h=followHarness(),scroll=h.node('#timeline-scroller');h.run('setKaraoke(true);moveTimeline(1200,80);moveTimeline(1300,100)');scroll.handlers.scroll();
+  assert.equal(h.run('state.follow'),'following');
+  for(const modifier of ['ctrlKey','metaKey'])scroll.handlers.wheel({deltaX:50,deltaY:50,[modifier]:true,preventDefault(){throw Error('System gesture captured');}});
+  assert.equal(h.run('state.follow'),'following');
+  h.run('moveTimeline(0,0)');scroll.handlers.wheel({deltaX:0,deltaY:-50,deltaMode:0,preventDefault(){throw Error('Edge captured');}});
+  assert.equal(h.run('state.follow'),'following');
+});
+test('A12 seek, both zooms, mode, speed and EOF preserve the follow state',async()=>{
+  const h=followHarness();tempoFetch(h);h.run('setKaraoke(true)');await h.run('requestMode("light")');
+  h.run('seek(150)');h.node('#zoom-slider').handlers.input({target:{value:16}});h.node('#height-slider').handlers.input({target:{value:4}});
+  assert.equal(h.run('state.follow'),'following');assert.ok(Math.abs(h.run('74+currentPosition()*pixelsPerSecond()-scroller.scrollLeft')-(74+926*.35))<1e-8);
+  h.run('suspendFollow()');const x=h.node('#timeline-scroller').scrollLeft;h.run('seek(145)');await h.run('requestMode("pro")');await h.run('requestRate(.5)');
+  assert.equal(h.run('state.follow'),'suspended');assert.equal(h.node('#timeline-scroller').scrollLeft,x);assert.equal(h.run('state.playing'),false);
+  h.node('#karaoke-return').click();h.run('state.position=303.7');await h.run('play()');h.audio.currentTime+=1;h.run('tick()');const end=h.node('#timeline-scroller').scrollLeft;
+  h.audio.currentTime+=3;h.run('tick()');assert.equal(h.node('#timeline-scroller').scrollLeft,end);assert.equal(h.run('state.frame'),null);
+});
+test('A13 missing notes still follow time; unavailable storage leaves toggle functional',()=>{
+  const h=followHarness();h.env.localStorage.setItem=()=>{throw Error('storage blocked');};h.run('setKaraoke(true);followPosition(160)');
+  assert.equal(h.run('state.follow'),'following');assert.ok(Math.abs(h.node('#timeline-scroller').scrollLeft-(160*224-926*.35))<1e-8);
+});
+
+test('A12 reload retains the toggle but never persists suspended state or starts playback',()=>{
+  const h=harness([['vocalcreator:karaoke-follow','true']]);assert.equal(h.run('state.follow'),'following');assert.equal(h.run('state.playing'),false);
+  h.run('suspendFollow()');assert.equal(h.storage.get('vocalcreator:karaoke-follow'),'true');
+  const reopened=harness([...h.storage]);assert.equal(reopened.run('state.follow'),'following');assert.equal(reopened.recorded.length,0);
+});
+test('A10 reduced motion centers immediately, while notes inside the safe area leave height alone',()=>{
+  const h=followHarness();h.env.window.matchMedia=()=>({matches:true});h.env.fixtureNotes=[{id:'low',start:139,end:141,midi:50},{id:'high',start:141,end:142,midi:85}];
+  h.run('state.learning={notes:fixtureNotes};state.midiMax=90;state.baseRow=12;state.heightZoom=3;setKaraoke(true);followPosition(141.5)');
+  assert.ok(Math.abs(h.run('midiY(85)')-295)<1e-8);
+  const top=h.node('#timeline-scroller').scrollTop;h.run('followPosition(141.6)');assert.equal(h.node('#timeline-scroller').scrollTop,top);
+});
+test('A12 background return uses current audio time without scheduling extra sources or a second animation loop',async()=>{
+  const h=followHarness();h.run('setKaraoke(true)');await h.run('play()');const starts=h.recorded.slice();h.audio.currentTime+=30;
+  h.env.document.hidden=false;h.env.document.handlers.visibilitychange();
+  assert.ok(Math.abs(h.run('74+currentPosition()*pixelsPerSecond()-scroller.scrollLeft')-(74+926*.35))<1e-8);assert.deepEqual(h.recorded,starts);
+  const x=h.node('#timeline-scroller').scrollLeft;h.run('pause()');h.audio.currentTime+=10;h.env.document.handlers.visibilitychange();assert.equal(h.node('#timeline-scroller').scrollLeft,x);
+});
+
+test('A12 keyboard return keeps its focus target until focus leaves the control',()=>{
+  const h=followHarness(),button=h.node('#karaoke-return');h.run('setKaraoke(true);suspendFollow()');h.env.document.activeElement=button;button.click();
+  assert.equal(h.run('state.follow'),'following');assert.equal(h.env.document.activeElement,button);assert.equal(button.disabled,false);assert.equal(button.attributes['aria-hidden'],'false');
+  h.env.document.activeElement=h.node('#karaoke-toggle');button.handlers.blur();assert.equal(button.disabled,true);assert.equal(button.attributes['aria-hidden'],'true');
 });

@@ -12,7 +12,9 @@ const state = {
   learning:null, mode:null, pendingMode:null, modeRequest:0, jobRequest:0, openRequest:0, modeAbort:null, loadingAudio:false,
   modeAvailability:{}, modeCache:new Map(), tempoCache:new Map(), originalBuffers:{},
   rate:1,pendingRate:null,desiredRate:1,desiredMode:null,v3Enabled:false,canonicalText:'',canonicalWords:[],
-  tempoPreparation:null,heightZoom:1,midiMin:48,midiMax:72,baseRow:12,selectedWord:null,wordNodes:new Map()
+  tempoPreparation:null,heightZoom:1,midiMin:48,midiMax:72,baseRow:12,selectedWord:null,wordNodes:new Map(),
+  selectedRegion:null,wordContextKey:null,presentation:null,labelLayout:null,timelineHits:[],
+  follow:'off',scrollPosition:null,verticalTarget:null,followFrameTime:null
 };
 const trackMeta = {
   vocals:{label:'Вокал',file:'vocals.wav'},piano:{label:'Пианино',file:'piano.wav'},instrumental:{label:'Минус',file:'instrumental.wav'}
@@ -75,22 +77,6 @@ async function watchJob(jobId){
       const job=await json(`/api/studio/jobs/${jobId}`);setConnection(true);state.job=job;renderStages(job);
       if(['complete','partial','failed','interrupted'].includes(job.status)){
         clearInterval(state.poll);state.poll=null;await loadLibrary();
-if(window.location?.search){
-  const params=new URLSearchParams(window.location.search),initialJob=params.get('job');
-  if(initialJob)openJob(initialJob).then(()=>{
-    if(state.job?.id!==initialJob)return;
-    for(const [key,selector,min,max] of [['zoom','#zoom-slider',.5,32],['height','#height-slider',1,6]]){
-      const value=Number(params.get(key));if(!params.has(key)||!Number.isFinite(value)||value<min||value>max)continue;
-      $(selector).value=String(value);$(selector).dispatchEvent(new Event('input',{bubbles:true}));
-    }
-    const position=Number(params.get('t'));
-    if(params.has('t')&&Number.isFinite(position)&&position>=0&&position<=state.duration){
-      seek(position);const scroll=$('#timeline-scroller');scroll.scrollLeft=Math.max(0,position*pixelsPerSecond()-(scroll.clientWidth-74)*.35);
-      const note=activeNotes()[activeNoteIndex(position)];if(note)scroll.scrollTop=Math.max(0,scroll.scrollTop+midiY(note.midi)-(scroll.clientHeight+80)/2);
-    }
-    drawAll();
-  });
-}
         if(Object.keys(job.artifacts||{}).length)await applyJob(job);
       }
     }catch(error){setConnection(false);$('#progress-detail').textContent=`Соединение потеряно: ${error.message}. Повторяю…`;}finally{busy=false;}
@@ -105,7 +91,7 @@ async function openJob(jobId){
 async function applyJob(job){
   const request=++state.jobRequest;
   pause();state.modeAbort?.abort();++state.modeRequest;state.job=job;state.melody=null;state.alignment=null;state.words=[];state.buffers={};state.position=0;state.inspectorKey=null;
-  state.learning=null;state.mode=null;state.pendingMode=null;state.pendingRate=null;state.rate=state.desiredRate=1;state.desiredMode=null;state.v3Enabled=false;state.canonicalText='';state.canonicalWords=[];state.tempoCache.clear();state.originalBuffers={};state.selectedWord=null;state.wordNodes.clear();state.modeCache.clear();state.modeAvailability={};state.loadingAudio=true;clearTransportStatus();
+  state.learning=null;state.mode=null;state.pendingMode=null;state.pendingRate=null;state.rate=state.desiredRate=1;state.desiredMode=null;state.v3Enabled=false;state.canonicalText='';state.canonicalWords=[];state.tempoCache.clear();state.originalBuffers={};state.selectedWord=null;state.selectedRegion=null;state.wordContextKey=null;state.presentation=null;state.labelLayout=null;state.wordNodes.clear();state.modeCache.clear();state.modeAvailability={};state.loadingAudio=true;clearTransportStatus();
   $('#play-button').disabled=true;renderModes();
   $('#workspace-empty').hidden=true;$('#studio-result').hidden=false;$('#mixer-section').hidden=false;
   const banner=$('#result-banner'),recovery=$('#result-recovery');banner.className=`result-banner ${job.status}`;$('#result-banner-text').textContent=job.status==='complete'?'Все стадии результата завершены.':job.status==='partial'?'Часть результата доступна; можно изучить сохранённое и повторить анализ.':job.status==='interrupted'?'Анализ прерван; сохранённые файлы доступны.':'Анализ завершился с ошибкой; сохранённые файлы доступны.';recovery.hidden=job.status==='complete';
@@ -132,7 +118,7 @@ async function applyJob(job){
   $('#result-summary').textContent=`${noteCount} нот · ${wordCount} слов · ${formatTime(state.duration,false)}`;
   $('#timeline-message').textContent=errors.length?errors.map(error=>`${error.stage}: ${error.message}`).join(' · '):noteCount?'Фиолетовые полоски: ноты; голубая линия: несглаженный pitch.':'Определимых нот не найдено; пустой таймлайн не заполнен догадками.';
   $('#play-button').disabled=!Object.keys(state.buffers).length;$('#zoom-slider').disabled=false;$('#height-slider').disabled=false;$('#speed-select').disabled=!Object.keys(state.buffers).length;$('#speed-select').value='1';$('#speed-status').hidden=true;
-  updatePitchRange();$('#timeline-scroller').scrollLeft=0;$('#timeline-scroller').scrollTop=0;
+  updatePitchRange();moveTimeline(0,0);
   resizeTimeline();drawAll();
   let preferred='light';try{preferred=localStorage.getItem(`vocalcreator:mode:${job.id}`)||'light';}catch(_){}
   if(!['light','medium','pro'].includes(preferred))preferred='light';
@@ -273,9 +259,9 @@ async function requestPlayback(mode,rate){
     $('#result-summary').textContent=`${activeNotes().length} нот · ${state.words.length} слов · ${formatTime(state.duration,false)}`;
     const diagnostics=state.learning?.diagnostics||{},parts=state.learning?.text_parts||[];
     const fallback=parts.filter(part=>part.kind==='whole-word-fallback'||part.status==='fallback').length;
-    $('#timeline-message').textContent=`Текст над шкалой сохраняется и без ноты. Внутри нот — части слова; — означает продолжение. Голубая линия — исходная высота голоса.${diagnostics.notes_with_lyric_context?` «Контекст» на ${diagnostics.notes_with_lyric_context} нотах: показано соседнее слово лирики, точное слово на этом участке не подтверждено.`:''}${fallback?` Частей без определённой слоговой границы: ${fallback}; полное слово доступно в тексте и инспекторе.`:''}${diagnostics.words_without_notes?` Слов без ноты: ${diagnostics.words_without_notes}.`:''}`;
+    $('#timeline-message').textContent=`Текст над шкалой сохраняется и без ноты. Подписи над нотами; ─ означает продолжение. Приглушённые участки звучат без текстовой границы. Голубая линия — исходная высота голоса.${diagnostics.notes_with_lyric_context?` «Контекст» на ${diagnostics.notes_with_lyric_context} нотах: показано соседнее слово лирики, точное слово на этом участке не подтверждено.`:''}${fallback?` Частей без определённой слоговой границы: ${fallback}; полное слово доступно в тексте и инспекторе.`:''}${diagnostics.words_without_notes?` Слов без ноты: ${diagnostics.words_without_notes}.`:''}`;
     if(mode)try{localStorage.setItem(`vocalcreator:mode:${job}`,mode);}catch(_){}
-    drawAll();
+    state.selectedRegion=null;state.wordContextKey=null;followPosition(currentPosition(),{immediate:true});drawAll();
   }catch(error){
     if(!current())return;
     state.pendingMode=null;state.pendingRate=null;state.desiredMode=state.mode;state.desiredRate=state.rate;renderModes();
@@ -312,6 +298,73 @@ function currentPosition(){
   if(!state.playing||!state.context)return state.position;
   return Math.min(state.duration,Math.max(state.startPosition,state.startPosition+(state.context.currentTime-state.startedAt)*state.rate));
 }
+const followStorageKey='vocalcreator:karaoke-follow';
+function renderFollow(){
+  $('#karaoke-toggle').checked=state.follow!=='off';
+  $('#karaoke-status').textContent=state.follow==='suspended'?'Следование приостановлено':state.follow==='following'?'Следование за словами и нотами':'Автоследование за словами и нотами';
+  const button=$('#karaoke-return');
+  // A keyboard activation must not remove its own focus target. Retire the
+  // return control after focus leaves it; repeated activation just recenters.
+  const available=state.follow==='suspended'||(state.follow==='following'&&document.activeElement===button);
+  button.disabled=!available;button.setAttribute('aria-hidden',String(!available));
+}
+function suspendFollow(){
+  if(state.follow!=='following')return;
+  state.follow='suspended';state.verticalTarget=null;state.followFrameTime=null;renderFollow();
+}
+function rememberScroll(){const scroll=$('#timeline-scroller');state.scrollPosition={x:scroll.scrollLeft,y:scroll.scrollTop};}
+function observeTimelineScroll(){
+  const scroll=$('#timeline-scroller'),previous=state.scrollPosition;
+  if(previous&&(Math.abs(scroll.scrollLeft-previous.x)>.5||Math.abs(scroll.scrollTop-previous.y)>.5))suspendFollow();
+  rememberScroll();
+}
+function moveTimeline(x,y){
+  const scroll=$('#timeline-scroller');
+  if(Number.isFinite(x))scroll.scrollLeft=Math.max(0,Math.min(Math.max(0,scroll.scrollWidth-scroll.clientWidth),x));
+  if(Number.isFinite(y))scroll.scrollTop=Math.max(0,Math.min(Math.max(0,scroll.scrollHeight-scroll.clientHeight),y));
+  // Scroll events are asynchronous/coalesced; record the browser's actual
+  // clamped coordinates, never a timer-based suppression window.
+  rememberScroll();
+}
+function followPosition(position=currentPosition(),{immediate=false}={}){
+  observeTimelineScroll();
+  if(state.follow!=='following')return;
+  const scroll=$('#timeline-scroller'),usable=Math.max(1,scroll.clientHeight-110),center=110+usable/2;
+  const notes=activeNotes(),note=notes[activeNoteIndex(position)];
+  let y=scroll.scrollTop;
+  if(note){
+    const screen=midiY(note.midi),half=Math.max(3,rowHeight()*.76)/2;
+    const safeTop=110+usable*.2+half,safeBottom=110+usable*.8-half;
+    if(immediate||state.verticalTarget?.note!==note){
+      state.verticalTarget=null;
+      if(immediate||screen<safeTop||screen>safeBottom){
+        const nearby=notes.filter(item=>item.start>=position&&item.start<=position+2).map(item=>midiY(item.midi));
+        const top=Math.min(screen,...nearby),bottom=Math.max(screen,...nearby);
+        const targetCenter=bottom-top+2*half<=usable*.6?(top+bottom)/2:screen;
+        state.verticalTarget={note,y:Math.max(0,Math.min(scroll.scrollHeight-scroll.clientHeight,y+targetCenter-center))};
+      }
+    }
+    if(state.verticalTarget){
+      const now=state.context?.currentTime??0,dt=state.followFrameTime==null?1/60:Math.max(0,now-state.followFrameTime);
+      const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      const weight=immediate||reduced?1:1-Math.exp(-dt/.085);
+      y+=(state.verticalTarget.y-y)*weight;
+      // Even on a large pitch jump the current bar stays fully visible while
+      // the final centering eases; no queued animation can trail the audio.
+      y=Math.max(scroll.scrollTop+screen-(scroll.clientHeight-half-6),Math.min(scroll.scrollTop+screen-(110+half+6),y));
+    }
+  }else state.verticalTarget=null;
+  state.followFrameTime=state.context?.currentTime??null;
+  moveTimeline(position*pixelsPerSecond()-(scroll.clientWidth-74)*.35,y);
+}
+function setKaraoke(enabled){
+  rememberScroll();state.follow=enabled?'following':'off';state.verticalTarget=null;state.followFrameTime=null;
+  try{localStorage.setItem(followStorageKey,String(enabled));}catch(_){}
+  renderFollow();if(enabled)followPosition(currentPosition(),{immediate:true});drawAll();
+}
+$('#karaoke-toggle').addEventListener('change',event=>setKaraoke(event.target.checked));
+$('#karaoke-return').addEventListener('click',()=>{rememberScroll();state.follow='following';state.verticalTarget=null;renderFollow();followPosition(currentPosition(),{immediate:true});drawAll();});
+$('#karaoke-return').addEventListener('blur',renderFollow);
 function transportIcon(playing){
   const button=$('#play-button'),label=playing?'Пауза':'Воспроизвести';
   button.setAttribute('aria-label',label);button.title=label;
@@ -350,20 +403,21 @@ function stopSources(){Object.values(state.sources).forEach(source=>{try{source.
 function pause(){
   ++state.playRequest;state.starting=false;
   if(state.playing)state.position=currentPosition();state.playing=false;
-  stopSources();cancelAnimationFrame(state.frame);transportIcon(false);updatePositionUI();
+  stopSources();cancelAnimationFrame(state.frame);state.frame=null;state.followFrameTime=null;transportIcon(false);updatePositionUI();
 }
-function seek(value){state.selectedWord=null;state.inspectorKey=null;const resume=state.playing||state.starting;if(resume)pause();state.position=Math.max(0,Math.min(state.duration,Number(value)||0));updatePositionUI();drawAll();if(resume)play();}
+function seek(value){state.selectedWord=null;state.selectedRegion=null;state.inspectorKey=null;const resume=state.playing||state.starting;if(resume)pause();state.position=Math.max(0,Math.min(state.duration,Number(value)||0));followPosition(state.position,{immediate:true});updatePositionUI();drawAll();if(resume)play();}
 function tick(){
   if(!state.playing)return;const value=currentPosition();
+  cancelAnimationFrame(state.frame);state.frame=null;
   if(value>=state.duration){pause();state.position=state.duration;updatePositionUI();drawAll();return;}
-  updatePositionUI(value);drawAll(value);state.frame=requestAnimationFrame(tick);
+  followPosition(value);updatePositionUI(value);drawAll(value);state.frame=requestAnimationFrame(tick);
 }
 function updatePositionUI(value=currentPosition()){state.position=state.playing?state.position:value;$('#time-current').textContent=formatTime(value);$('#seek-slider').value=value;$('#canvas-seek').value=value;renderInspector(value);}
 
 $('#play-button').addEventListener('click',()=>state.playing||state.starting?pause():play());
 $('#seek-slider').addEventListener('input',event=>seek(event.target.value));$('#canvas-seek').addEventListener('input',event=>seek(event.target.value));
-$('#zoom-slider').addEventListener('input',event=>{const center=($('#timeline-scroller').scrollLeft+($('#timeline-scroller').clientWidth-74)/2)/pixelsPerSecond();state.zoom=Number(event.target.value);$('#zoom-value').textContent=`${state.zoom}×`;resizeTimeline();$('#timeline-scroller').scrollLeft=Math.max(0,center*pixelsPerSecond()-($('#timeline-scroller').clientWidth-74)/2);drawAll();});
-$('#height-slider').addEventListener('input',event=>{const scroll=$('#timeline-scroller'),center=(scroll.clientHeight+80)/2,anchor=state.midiMax+.5-(center+scroll.scrollTop-96)/rowHeight();state.heightZoom=Number(event.target.value);$('#height-value').textContent=`${state.heightZoom}×`;resizeTimeline();scroll.scrollTop=Math.max(0,96+(state.midiMax+.5-anchor)*rowHeight()-center);drawAll();});
+$('#zoom-slider').addEventListener('input',event=>{const center=($('#timeline-scroller').scrollLeft+($('#timeline-scroller').clientWidth-74)/2)/pixelsPerSecond();state.zoom=Number(event.target.value);$('#zoom-value').textContent=`${state.zoom}×`;resizeTimeline();moveTimeline(center*pixelsPerSecond()-($('#timeline-scroller').clientWidth-74)/2);followPosition(currentPosition(),{immediate:true});drawAll();});
+$('#height-slider').addEventListener('input',event=>{const scroll=$('#timeline-scroller'),center=(scroll.clientHeight+80)/2,anchor=state.midiMax+.5-(center+scroll.scrollTop-126)/rowHeight();state.heightZoom=Number(event.target.value);$('#height-value').textContent=`${state.heightZoom}×`;resizeTimeline();moveTimeline(undefined,126+(state.midiMax+.5-anchor)*rowHeight()-center);followPosition(currentPosition(),{immediate:true});drawAll();});
 $('#refresh-library').addEventListener('click',loadLibrary);
 document.addEventListener('keydown',event=>{if(event.defaultPrevented||event.repeat||event.ctrlKey||event.metaKey||event.altKey||event.target.closest('input,select,textarea,button,a,[contenteditable=true]'))return;if(event.code==='Space'){event.preventDefault();$('#play-button').click();}if(event.key==='ArrowRight')seek(currentPosition()+2);if(event.key==='ArrowLeft')seek(currentPosition()-2);});
 
@@ -371,8 +425,8 @@ function setRangeBounds(){for(const selector of ['#seek-slider','#canvas-seek'])
 function pixelsPerSecond(){return 28*state.zoom;}
 function resizeTimeline(){
   const scroller=$('#timeline-scroller'),canvas=$('#timeline-canvas'),spacer=$('#timeline-spacer'),height=Math.max(200,scroller.clientHeight),width=Math.max(320,scroller.clientWidth);
-  spacer.style.width=`${Math.max(width,state.duration*pixelsPerSecond()+82)}px`;spacer.style.height=`${Math.max(height,96+(state.midiMax-state.midiMin+1)*rowHeight()+28)}px`;canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;const dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
-  const overview=$('#overview-canvas'),overviewWidth=Math.max(180,overview.clientWidth),overviewHeight=Math.max(42,overview.clientHeight);overview.width=Math.round(overviewWidth*dpr);overview.height=Math.round(overviewHeight*dpr);
+  spacer.style.width=`${Math.max(width,state.duration*pixelsPerSecond()+82)}px`;spacer.style.height=`${Math.max(height,126+(state.midiMax-state.midiMin+1)*rowHeight()+28)}px`;canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;const dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
+  const overview=$('#overview-canvas'),overviewWidth=Math.max(180,overview.clientWidth),overviewHeight=Math.max(42,overview.clientHeight);overview.width=Math.round(overviewWidth*dpr);overview.height=Math.round(overviewHeight*dpr);rememberScroll();state.labelLayout=null;
 }
 function makePeaks(){
   const buffer=state.buffers.vocals||state.buffers.instrumental||state.buffers.piano;if(!buffer){state.peaks=[];return;}const data=buffer.getChannelData(0),count=1800,step=Math.max(1,Math.floor(data.length/count));state.peaks=[];
@@ -383,16 +437,37 @@ function updatePitchRange(){
   const pitches=[...activeNotes().map(note=>note.midi),...(state.melody?.pitch_frames||[]).map(frame=>frame.midi)].filter(value=>Number.isFinite(value));
   state.midiMin=pitches.length?Math.max(0,Math.floor(pitches.reduce((min,pitch)=>Math.min(min,pitch),127))-2):48;
   state.midiMax=pitches.length?Math.min(127,Math.ceil(pitches.reduce((max,pitch)=>Math.max(max,pitch),0))+2):72;
-  state.baseRow=Math.max(1,($('#timeline-scroller').clientHeight-124)/(state.midiMax-state.midiMin+1));
+  state.baseRow=Math.max(1,($('#timeline-scroller').clientHeight-154)/(state.midiMax-state.midiMin+1));
 }
 function rowHeight(){return state.baseRow*state.heightZoom;}
-function midiY(midi){return 96+(state.midiMax-midi+.5)*rowHeight()-$('#timeline-scroller').scrollTop;}
+function midiY(midi){return 126+(state.midiMax-midi+.5)*rowHeight()-$('#timeline-scroller').scrollTop;}
 function noteLabels(note){
   const links=note.labels||state.learning?.note_text_links?.filter(link=>link.note_id===note.id);
   if(links?.length)return links.map(link=>{const part=state.learning?.text_parts?.find(part=>part.id===link.part_id);return {...link,text:link.text||part?.text||'',context:link.context||link.status==='context'||link.kind==='lyric-context',fallback:link.fallback||link.kind==='whole-word-fallback'||part?.kind==='whole-word-fallback'||part?.status==='fallback'||link.status==='fallback',approximate:link.approximate||['approximate','context'].includes(link.status)||part?.status==='approximate',reason:link.reason||part?.reason,message:link.message||part?.message};});
   const words=state.words.filter(word=>word.links?.some(link=>link.note_id===note.id));
   if(words.length)return words.map(word=>({word_id:word.id,text:word.text,start:Math.max(note.start,word.start??note.start),end:Math.min(note.end,word.end??note.end),fallback:true,reason:'часть слова не определена'}));
   return [{text:'Нет текста',start:note.start,end:note.end,missing:true}];
+}
+// These regions are presentation and hit targets, never new notes or attacks.
+// Missing timing keeps the original event; only known boundaries may divide it.
+function noteWordRegions(note){
+  const labels=noteLabels(note),timed=labels.every(label=>label.word_id&&Number.isFinite(label.start)&&Number.isFinite(label.end)&&label.end>label.start);
+  return intervalsFor(note).flatMap(interval=>{
+    if(!timed)return [{...interval,note,labels,undivided:true}];
+    const cuts=[...new Set([interval.start,interval.end,...labels.flatMap(label=>[label.start,label.end]).filter(time=>time>interval.start&&time<interval.end)])].sort((a,b)=>a-b);
+    return cuts.slice(0,-1).map((start,index)=>{
+      const end=cuts[index+1],linked=labels.filter(label=>label.start<end&&label.end>start);
+      return {note,start,end,labels:linked,gap:!linked.length,ambiguous:new Set(linked.map(label=>label.word_id)).size>1};
+    });
+  });
+}
+function timelinePresentation(){
+  const notes=activeNotes();
+  if(state.presentation?.notes!==notes||state.presentation?.words!==state.words){
+    state.presentation={notes,words:state.words,regions:new Map(notes.map(note=>[note,noteWordRegions(note)])),spans:timelineLabelSpans(notes)};
+    state.labelLayout=null;
+  }
+  return state.presentation;
 }
 // Presentation only: adjacent links identify a run, never the text or the
 // generator's global "seen part" flag alone. A rest starts a fresh anchor.
@@ -415,9 +490,15 @@ function timelineLabelSpans(notes){
 }
 function noteName(midi, bilingual=false){const latin=['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'],ru=['До','До♯','Ре','Ре♯','Ми','Фа','Фа♯','Соль','Соль♯','Ля','Ля♯','Си'],pitch=Math.round(midi),octave=Math.floor(pitch/12)-1,index=(pitch%12+12)%12;return bilingual?`${ru[index]}${octave} (${latin[index]}${octave})`:`${latin[index]}${octave}`;}
 function activeNoteIndex(position){return activeNotes().findIndex(note=>intervalsFor(note).some(interval=>interval.start<=position&&position<interval.end));}
+function wordAt(position){return state.words.find(word=>Number.isFinite(word.start)&&Number.isFinite(word.end)&&word.start<=position&&position<word.end);}
 function isApproximateWord(word){return word?.approximate??(word?.timing?.source!=='manual'&&(!word?.aligned||['interpolated','approximate_split','unknown'].includes(word?.timing?.source)));}
 function renderInspector(position=currentPosition()){
-  const notes=activeNotes(),index=activeNoteIndex(position),note=index>=0?notes[index]:null,activeWord=state.words.find(word=>word.start<=position&&position<word.end),key=`${note?.id||'none'}:${activeWord?.id||'none'}:${state.selectedWord||''}`;
+  const notes=activeNotes(),selected=!state.playing?state.selectedRegion:null,index=selected?notes.indexOf(selected.note):activeNoteIndex(position),note=index>=0?notes[index]:null;
+  const region=selected||(note?noteWordRegions(note).find(item=>item.start<=position&&position<item.end):null);
+  const activeWord=wordAt(position);
+  const linked=region?.labels||[],contextOnly=linked.length&&linked.every(label=>label.context),gap=region?.gap;
+  const word=(!state.playing&&state.words.find(item=>item.id===state.selectedWord))||(!gap&&!contextOnly&&activeWord)||state.words.find(item=>linked.some(label=>label.word_id===item.id));
+  const key=`${note?.id||'none'}:${word?.id||'none'}:${activeWord?.id||''}:${state.selectedWord||''}:${region?.start}:${gap}:${contextOnly}`;
   const summary=`График содержит ${notes.length} нот выбранного режима и ${state.words.length} слов. Кнопки «Предыдущая» и «Следующая» последовательно открывают каждую ноту, включая короткие.`,positionLabel=index>=0?`${index+1} / ${notes.length}`:`– / ${notes.length}`;
   if($('#timeline-semantic-summary').textContent!==summary)$('#timeline-semantic-summary').textContent=summary;
   if($('#inspector-position').textContent!==positionLabel)$('#inspector-position').textContent=positionLabel;
@@ -432,80 +513,130 @@ function renderInspector(position=currentPosition()){
   }else{
     $('#inspector-note').textContent='Нет определимой ноты';$('#inspector-detail').textContent=`${formatTime(position,false)} · pitch в этой позиции не образует нотное событие.`;
   }
-  const linkedWords=note?state.words.filter(word=>word.links?.some(link=>link.note_id===note.id)):[],word=(!state.playing&&state.words.find(item=>item.id===state.selectedWord))||activeWord||linkedWords[0];
+  $('#inspector-note-detail').textContent=`${$('#inspector-note').textContent} · ${note?.id||'Без нотного события'}\n${$('#inspector-detail').textContent}`;
+  const linkedWords=note?state.words.filter(word=>word.links?.some(link=>link.note_id===note.id)||noteLabels(note).some(label=>label.word_id===word.id)):[];
   for(const [id,node] of state.wordNodes){node.classList.toggle('active',id===activeWord?.id);node.classList.toggle('selected',id===state.selectedWord);}
   if(word){
     const approximate=isApproximateWord(word),extra=linkedWords.length>1?` · связаны слова: ${linkedWords.map(item=>item.text).join(', ')}`:'';
     const labels=note?noteLabels(note).filter(label=>label.word_id===word.id):[],partCopy=labels.map(label=>`${label.text}${label.continuation?'—':''}${label.context?' · контекст лирики, слово здесь не подтверждено':label.fallback?' · часть слова не определена':label.approximate?' · граница части приблизительная':''}${label.message?` · ${label.message}`:''}${label.reason?` · ${label.reason}`:''}`).join(' / ');
-    $('#inspector-word').textContent=`${approximate?'≈ ':''}${word.text}`;$('#inspector-word-detail').textContent=`${Number.isFinite(word.start)?`${formatTime(word.start,false)}–${formatTime(word.end,false)}`:'≈ Время не определено'} · ${word.message||(approximate?'приблизительная привязка':'прямая привязка')}${extra}${partCopy?` · ${partCopy}`:''}${word.links?.length?'':' · Нет определимой ноты.'}`;
+    $('#inspector-word-detail').textContent=`${word.text} · ${word.id}\n${Number.isFinite(word.start)?`${formatTime(word.start,false)}–${formatTime(word.end,false)}`:'≈ Время не определено'} · ${word.message||(approximate?'приблизительная привязка':'прямая привязка')}${extra}${partCopy?` · ${partCopy}`:''}${word.links?.length?'':' · Нет определимой ноты.'}`;
   }else{
-    $('#inspector-word').textContent='Нет слова';$('#inspector-word-detail').textContent=note?'У этой ноты нет связи с текстом.':'В этой позиции нет слова и ноты.';
+    $('#inspector-word-detail').textContent=note?'У этой ноты нет связи с текстом.':'В этой позиции нет слова и ноты.';
   }
+  const wordKey=`${word?.id||''}:${contextOnly}:${region?.ambiguous||false}`;
+  if(state.wordContextKey!==wordKey){
+    state.wordContextKey=wordKey;
+    $('#inspector-word').textContent=word?`${contextOnly?'Контекст: ':isApproximateWord(word)||region?.ambiguous?'≈ ':''}${word.text}`:'Нет слова';
+    $('#inspector-word').title=$('#inspector-word').textContent;
+    const wordIndex=word?state.words.indexOf(word):-1;
+    for(const [selector,offset,title] of [['#word-previous',-1,'До'],['#word-next',1,'Далее'],['#word-after-next',2,'Затем']]){
+      const neighbor=wordIndex>=0?state.words[wordIndex+offset]:null,node=$(selector);
+      node.textContent=neighbor?.text||'—';node.title=`${title}: ${neighbor?.text||'нет слова'}`;node.setAttribute('aria-label',node.title);
+    }
+  }
+  $('#inspector-word-status').textContent=gap?'Звучание без текстовой границы':contextOnly?'Слово здесь не подтверждено':region?.ambiguous?'≈ Спорная граница слов':linked.some(label=>label.fallback)?'≈ Часть слова не определена':linked.some(label=>label.approximate)?'≈ Приблизительная граница части':word?(isApproximateWord(word)?'≈ Приблизительная привязка':Number.isFinite(word.start)?'Прямая привязка':'≈ Время не определено'):'Связь с текстом отсутствует';
+  $('#inspector-region-detail').textContent=region?`${formatTime(region.start)}–${formatTime(region.end)} · исходная нота ${note.id}\n${gap?'Звучание продолжается; в этом промежутке нет текстовой границы.':region.undivided?'Недостаточно временных связей: нота показана целиком, границы не придуманы.':region.ambiguous?'≈ Связи слов перекрываются; точная граница спорная.':''}\n${linked.map(label=>`${label.context?'Контекст: ':''}${label.text} · word_id: ${label.word_id||'не задан'} · part_id: ${label.part_id||'не задан'}`).join('\n')}`:'';
 }
+$('#inspector-more').addEventListener('click',()=>$('#inspector-dialog').showModal());
+$('#inspector-close').addEventListener('click',()=>$('#inspector-dialog').close());
 function navigateNote(direction){
   const notes=activeNotes();if(!notes.length)return;const position=currentPosition(),index=activeNoteIndex(position);let target=-1;
   if(direction>0)target=index>=0?index+1:notes.findIndex(note=>note.start>position+.001);
   else if(index>0)target=index-1;else if(index<0){for(let candidate=notes.length-1;candidate>=0;candidate--){if(notes[candidate].start<position-.001){target=candidate;break;}}}
-  if(target<0||target>=notes.length)return;state.selectedWord=null;const note=notes[target];seek(note.start+Math.min(.001,Math.max(0,(note.end-note.start)/2)));$('#timeline-scroller').scrollLeft=Math.max(0,note.start*pixelsPerSecond()-$('#timeline-scroller').clientWidth*.42);const scroll=$('#timeline-scroller'),y=midiY(note.midi);if(y<110||y>scroll.clientHeight-30)scroll.scrollTop=Math.max(0,scroll.scrollTop+y-(scroll.clientHeight+80)/2);drawAll();
+  if(target<0||target>=notes.length)return;state.selectedWord=null;const note=notes[target];seek(note.start+Math.min(.001,Math.max(0,(note.end-note.start)/2)));const scroll=$('#timeline-scroller'),y=midiY(note.midi);if(state.follow!=='following')moveTimeline(note.start*pixelsPerSecond()-scroll.clientWidth*.42,y<110||y>scroll.clientHeight-30?scroll.scrollTop+y-(scroll.clientHeight+110)/2:undefined);drawAll();
 }
 $('#previous-note').addEventListener('click',()=>navigateNote(-1));$('#next-note').addEventListener('click',()=>navigateNote(1));
 $('#timeline-canvas').addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();event.stopPropagation();navigateNote(event.key==='ArrowRight'?1:-1);}});
 function drawAll(position=currentPosition()){renderInspector(position);drawTimeline(position);drawOverview(position);}
+function layoutTimelineLabels(ctx,{width,height,startTime,endTime,position,noteBoxes}){
+  const presentation=timelinePresentation(),scroll=$('#timeline-scroller'),pps=pixelsPerSecond();
+  const key=[scroll.scrollLeft,scroll.scrollTop,width,height,state.zoom,state.heightZoom,state.midiMax,state.baseRow,state.selectedWord,state.selectedRegion?.note.id].join(':');
+  // Keep placement stable on a stationary view. Reconsider a hidden current
+  // group once when it becomes relevant, not for every advance of the cursor.
+  const currentWord=wordAt(position)?.id;
+  const currentNote=activeNotes()[activeNoteIndex(position)]?.id;
+  const priorityKey=currentWord||currentNote;
+  const cached=state.labelLayout;
+  if(cached?.key===key&&(cached.priorityKey===priorityKey||cached.labels.some(label=>label.wordId===currentWord&&currentWord||label.noteId===currentNote&&currentNote)))return cached;
+  const groups=new Map();let order=0;
+  for(const span of presentation.spans){
+    const {note,label,start,end,group}=span,y=midiY(note.midi+.38),h=Math.max(3,rowHeight()*.76);
+    if(end<=startTime||start>=endTime||y+h<=110||y>=height)continue;
+    if(!groups.has(group))groups.set(group,[]);
+    groups.get(group).push({...span,y,h,order:order++});
+  }
+  const priority=spans=>spans.some(span=>span.label.word_id===state.selectedWord||span.note===state.selectedRegion?.note)?2:spans.some(span=>span.label.word_id===currentWord||span.note.id===currentNote)?1:0;
+  const ordered=[...groups.values()].sort((a,b)=>priority(b)-priority(a)||a[0].order-b[0].order),occupied=[],labels=[];let crowded=false;
+  for(const spans of ordered){
+    let anchored=false;
+    for(const span of spans){
+      const {note,label,start,end,continued,y,order}=span;
+      const ambiguous=presentation.regions.get(note).some(region=>region.ambiguous&&region.start<end&&region.end>start);
+      const prefix=label.context?'Контекст: ':label.fallback||label.approximate||ambiguous?'≈ ':'';
+      const resumed=continued||start<startTime,suffix=label.context?'':span.identified?(resumed?' ─':''):(label.continuation?'—':'');
+      const text=anchored&&continued?`${prefix}─`:`${prefix}${label.text}${suffix}`;
+      ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width;
+      const noteX=Math.max(74,74+start*pps-scroll.scrollLeft),x=Math.max(74,Math.min(noteX,width-measured-8));
+      let baseline=Math.max(94,Math.min(height-4,y-5)),placed=false;
+      for(;baseline>=94;baseline-=16){
+        const top=baseline-12,bottom=baseline+4,endX=x+measured+8;
+        const overlaps=box=>x<box.end+2&&endX+2>box.x&&top<box.bottom+2&&bottom+2>box.top;
+        if(endX<=width&&!occupied.some(overlaps)&&!noteBoxes.some(overlaps)){placed=true;break;}
+      }
+      if(!placed){crowded=true;if(!anchored)break;continue;}
+      occupied.push({x,end:x+measured+8,top:baseline-12,bottom:baseline+4});
+      labels.push({text,x,y:baseline,measured,noteX,noteY:y,noteId:note.id,wordId:label.word_id,missing:label.missing,order});anchored=true;
+    }
+  }
+  labels.sort((a,b)=>a.order-b.order);
+  state.labelLayout={key,priorityKey,labels,crowded};return state.labelLayout;
+}
 function drawTimeline(position){
   const canvas=$('#timeline-canvas'),ctx=canvas.getContext('2d'),{width,height}=setupCanvas(ctx,canvas),scroller=$('#timeline-scroller'),pps=pixelsPerSecond(),keyboard=74,startTime=Math.max(0,scroller.scrollLeft/pps),endTime=startTime+(width-keyboard)/pps;
   ctx.clearRect(0,0,width,height);ctx.fillStyle='#090c11';ctx.fillRect(0,0,width,height);
-  ctx.save();ctx.beginPath();ctx.rect(keyboard,80,width-keyboard,height-80);ctx.clip();
+  ctx.save();ctx.beginPath();ctx.rect(keyboard,110,width-keyboard,height-110);ctx.clip();
   for(let midi=state.midiMin;midi<=state.midiMax;midi++){
     const y=midiY(midi+.5),row=rowHeight();if(y+row<80||y>height)continue;
     ctx.fillStyle=[1,3,6,8,10].includes(midi%12)?'rgba(255,255,255,.018)':'rgba(255,255,255,.035)';ctx.fillRect(keyboard,y,width-keyboard,row);ctx.strokeStyle='rgba(255,255,255,.055)';ctx.beginPath();ctx.moveTo(keyboard,y);ctx.lineTo(width,y);ctx.stroke();
   }
   for(let second=Math.floor(startTime);second<=endTime+1;second++){const x=keyboard+second*pps-scroller.scrollLeft;ctx.strokeStyle=second%5===0?'rgba(133,135,247,.3)':'rgba(255,255,255,.055)';ctx.beginPath();ctx.moveTo(x,80);ctx.lineTo(x,height);ctx.stroke();}
-  const activeWord=state.words.find(word=>word.start<=position&&position<word.end),highlightedNotes=new Set(activeWord?.links?.map(link=>link.note_id)||[]),labels=[];
+  const activeWord=wordAt(position),highlightedNotes=new Set(activeWord?.links?.map(link=>link.note_id)||[]),noteBoxes=[];
+  state.timelineHits=[];
   for(const note of activeNotes()){
     if(note.end<startTime||note.start>endTime)continue;
-    const y=midiY(note.midi+.38),h=Math.max(3,rowHeight()*.76);if(y+h<80||y>height)continue;
+    const y=midiY(note.midi+.38),h=Math.max(3,rowHeight()*.76);if(y+h<=110||y>=height)continue;
     for(const interval of intervalsFor(note)){
       if(interval.end<startTime||interval.start>endTime)continue;
       const x=keyboard+interval.start*pps-scroller.scrollLeft,w=Math.max(1,(interval.end-interval.start)*pps);
       ctx.fillStyle=highlightedNotes.has(note.id)?'#a9abff':note.uncertain?'#6669ae':'#8587f7';ctx.fillRect(x,y,w,h);
+      noteBoxes.push({x:Math.max(74,x),end:Math.min(width,x+w),top:Math.max(110,y),bottom:Math.min(height,y+h)});
+      const regions=timelinePresentation().regions.get(note).filter(region=>region.start>=interval.start&&region.end<=interval.end);
+      const divided=regions.length>1||regions.some(region=>region.ambiguous);
+      for(const region of regions){
+        const left=keyboard+region.start*pps-scroller.scrollLeft,right=keyboard+region.end*pps-scroller.scrollLeft;
+        if(divided){
+          ctx.fillStyle=region.gap?'#45476c':region.ambiguous?'#b39c6c':region.labels.some(label=>label.word_id===activeWord?.id)?'#c5c6ff':'#9698ed';
+          ctx.fillRect(left,y+1,right-left,Math.max(1,h-2));
+          if(region.start>interval.start){ctx.strokeStyle='#242638';ctx.beginPath();ctx.moveTo(left,y+1);ctx.lineTo(left,y+h-1);ctx.stroke();}
+        }
+        state.timelineHits.push({...region,x:Math.max(74,left),endX:Math.min(width,right),y:Math.max(110,y),endY:Math.min(height,y+h)});
+      }
     }
-  }
-  // Visibility, not playback time or the previous frame, chooses one readable
-  // anchor per run. Hidden pitches and hidden parts of a long note do not count.
-  const anchored=new Set();
-  for(const span of timelineLabelSpans(activeNotes())){
-    const {note,label,start,end,group,continued}=span;
-    if(end<=startTime||start>=endTime)continue;
-    const y=midiY(note.midi+.38),h=Math.max(3,rowHeight()*.76);if(y+h<=80||y>=height)continue;
-    const continuationOnly=continued&&anchored.has(group),resumed=continued||start<startTime;
-    const prefix=label.context?'Контекст: ':label.fallback||label.approximate?'≈ ':'';
-    const suffix=label.context?'':span.identified?(resumed?' ─':''):(label.continuation?'—':'');
-    const text=continuationOnly?`${prefix}─`:`${prefix}${label.text}${suffix}`;
-    const labelX=Math.max(keyboard,keyboard+start*pps-scroller.scrollLeft),labelEnd=Math.min(width,keyboard+end*pps-scroller.scrollLeft);
-    ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width;
-    const inside=measured+8<=labelEnd-labelX&&h>=18&&y>=80&&y+h<=height;
-    labels.push({text,x:Math.max(keyboard,Math.min(labelX,width-measured-8)),noteX:labelX,y,h,measured,inside,missing:label.missing});
-    anchored.add(group);
   }
   const frames=state.melody?.pitch_frames||[];ctx.strokeStyle='rgba(88,216,255,.6)';ctx.lineWidth=1.4;ctx.beginPath();let drawing=false;const stride=Math.max(1,Math.floor(frames.length/12000));
   for(let i=0;i<frames.length;i+=stride){const frame=frames[i];if(frame.time<startTime||frame.time>endTime||!Number.isFinite(frame.midi)){drawing=false;continue;}const x=keyboard+frame.time*pps-scroller.scrollLeft,y=midiY(frame.midi);if(drawing)ctx.lineTo(x,y);else{ctx.moveTo(x,y);drawing=true;}}ctx.stroke();ctx.lineWidth=1;
-  const occupied=[];
-  for(const label of labels){
-    let baseline=label.inside?label.y+label.h/2+4:label.y-5;
-    if(!label.inside){
-      // Real note widths never expand for typography. Above-note labels use
-      // extra rows; readable close-up is obtained with the independent scales.
-      for(let lane=0;lane<8&&occupied.some(box=>Math.abs(box.y-baseline)<14&&label.x<box.end&&label.x+label.measured+8>box.x);lane++)baseline-=15;
-      if(baseline<94)baseline=label.y+label.h+15;
-      baseline=Math.max(94,Math.min(height-4,baseline));
-      occupied.push({x:label.x,end:label.x+label.measured+8,y:baseline});
-      ctx.strokeStyle='#8587f7';ctx.beginPath();ctx.moveTo(label.noteX+3,label.y);ctx.lineTo(label.x+3,baseline+2);ctx.stroke();
-      ctx.fillStyle='#111827';ctx.fillRect(label.x,baseline-12,label.measured+8,16);
-    }
-    ctx.fillStyle=label.inside?'#090b11':label.missing?'#aeb5c4':'#f4f6fb';ctx.font='500 12px -apple-system,sans-serif';ctx.fillText(label.text,label.x+4,baseline);
+  // One external label layer. The shelf above the pitch viewport also gives
+  // partially clipped notes a readable anchor without putting text in a bar.
+  ctx.restore();ctx.save();ctx.beginPath();ctx.rect(keyboard,80,width-keyboard,height-80);ctx.clip();
+  const labelLayout=layoutTimelineLabels(ctx,{width,height,startTime,endTime,position,noteBoxes});
+  for(const label of labelLayout.labels){
+    ctx.strokeStyle='#8587f7';ctx.beginPath();ctx.moveTo(label.noteX+3,Math.max(110,label.noteY));ctx.lineTo(label.x+3,label.y+2);ctx.stroke();
+    ctx.fillStyle='#111827';ctx.fillRect(label.x,label.y-12,label.measured+8,16);
+    ctx.fillStyle=label.missing?'#aeb5c4':'#f4f6fb';ctx.font='500 12px -apple-system,sans-serif';ctx.fillText(label.text,label.x+4,label.y);
   }
+  $('#label-density-hint').hidden=!labelLayout.crowded;
   ctx.restore();
-  ctx.save();ctx.beginPath();ctx.rect(0,80,keyboard,height-80);ctx.clip();ctx.fillStyle='#0d1015';ctx.fillRect(0,80,keyboard,height-80);
+  ctx.save();ctx.beginPath();ctx.rect(0,110,keyboard,height-110);ctx.clip();ctx.fillStyle='#0d1015';ctx.fillRect(0,110,keyboard,height-110);
   for(let midi=state.midiMin;midi<=state.midiMax;midi++){const y=midiY(midi+.5),row=rowHeight();if(y+row<80||y>height)continue;const black=[1,3,6,8,10].includes(midi%12);ctx.fillStyle=black?'#161a21':'#e5e7eb';ctx.fillRect(0,y,72,row);if(black){ctx.fillStyle='#242b38';ctx.fillRect(0,y,44,row);}ctx.strokeStyle='#303541';ctx.strokeRect(0,y,72,row);if(row>=10||midi%12===0){ctx.fillStyle=black?'#e5e7eb':'#252a34';ctx.font='10px -apple-system,sans-serif';ctx.fillText(noteName(midi),47,y+row/2+3);}}
   ctx.restore();
   // The ruler and waveform stay fixed vertically and share the timeline x-axis.
@@ -517,7 +648,8 @@ function drawTimeline(position){
   for(const word of state.words){
     if(!Number.isFinite(word.start)||!Number.isFinite(word.end)||word.end<startTime||word.start>endTime)continue;
     const x=Math.max(keyboard,keyboard+word.start*pps-scroller.scrollLeft),text=`${isApproximateWord(word)?'≈ ':''}${word.text}`;
-    ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width,lane=lyricLanes[0]<=x?0:lyricLanes[1]<=x?1:lyricLanes[0]<=lyricLanes[1]?0:1;
+    ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width,lane=lyricLanes[0]<=x?0:lyricLanes[1]<=x?1:-1;
+    if(lane<0||x+measured+6>width)continue;
     ctx.fillStyle=word.id===activeWord?.id?'#b7b9ff':'#e5e7eb';ctx.fillText(text,x+3,60+lane*15);lyricLanes[lane]=x+measured+8;
   }
   ctx.restore();
@@ -529,7 +661,15 @@ function drawOverview(position){
   ctx.fillStyle='rgba(133,135,247,.55)';state.peaks.forEach((peak,index)=>{const x=index/state.peaks.length*width,h=peak*(height-10);ctx.fillRect(x,(height-h)/2,Math.max(1,width/state.peaks.length),h);});
   const scroller=$('#timeline-scroller'),visible=Math.min(1,Math.max(0,(scroller.clientWidth-74)/(state.duration*pixelsPerSecond()))),start=scroller.scrollLeft/(state.duration*pixelsPerSecond());ctx.fillStyle='rgba(88,216,255,.08)';ctx.fillRect(start*width,0,visible*width,height);ctx.strokeStyle='rgba(88,216,255,.8)';ctx.strokeRect(start*width+.5,.5,Math.max(2,visible*width-1),height-1);ctx.fillStyle='#58d8ff';ctx.fillRect(position/state.duration*width-1,0,2,height);
 }
-$('#timeline-scroller').addEventListener('scroll',()=>drawAll());$('#timeline-canvas').addEventListener('click',event=>{const rect=event.currentTarget.getBoundingClientRect(),x=event.clientX-rect.left;if(x<74)return;const time=($('#timeline-scroller').scrollLeft+x-74)/pixelsPerSecond();seek(time);});$('#overview-canvas').addEventListener('click',event=>{const rect=event.currentTarget.getBoundingClientRect(),time=(event.clientX-rect.left)/rect.width*state.duration;seek(time);$('#timeline-scroller').scrollLeft=Math.max(0,time*pixelsPerSecond()-$('#timeline-scroller').clientWidth/2);});
+$('#timeline-scroller').addEventListener('scroll',()=>{observeTimelineScroll();drawAll();});
+$('#timeline-canvas').addEventListener('click',event=>{
+  const rect=event.currentTarget.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;if(x<74)return;
+  const time=($('#timeline-scroller').scrollLeft+x-74)/pixelsPerSecond();
+  const hit=state.timelineHits.find(region=>x>=region.x&&x<region.endX&&y>=region.y&&y<=region.endY);
+  seek(time);
+  if(hit){state.selectedRegion=hit;state.selectedWord=hit.labels[0]?.word_id||null;state.inspectorKey=null;drawAll();}
+});
+$('#overview-canvas').addEventListener('click',event=>{const rect=event.currentTarget.getBoundingClientRect(),time=(event.clientX-rect.left)/rect.width*state.duration;seek(time);if(state.follow!=='following')moveTimeline(time*pixelsPerSecond()-$('#timeline-scroller').clientWidth/2);drawAll();});
 const scroller=$('#timeline-scroller');
 scroller.addEventListener('wheel',event=>{
   if(event.ctrlKey||event.metaKey)return;
@@ -538,15 +678,18 @@ scroller.addEventListener('wheel',event=>{
   const deltaX=(event.shiftKey&&!event.deltaX?event.deltaY:event.deltaX)*unitX,deltaY=(event.shiftKey?0:event.deltaY)*unitY;
   const beforeX=scroller.scrollLeft,beforeY=scroller.scrollTop;
   const afterX=Math.max(0,Math.min(scroller.scrollWidth-scroller.clientWidth,beforeX+deltaX)),afterY=Math.max(0,Math.min(scroller.scrollHeight-scroller.clientHeight,beforeY+deltaY));
-  if(Math.abs(afterX-beforeX)>.01||Math.abs(afterY-beforeY)>.01){event.preventDefault();scroller.scrollLeft=afterX;scroller.scrollTop=afterY;}
+  if(Math.abs(afterX-beforeX)>.01||Math.abs(afterY-beforeY)>.01){event.preventDefault();suspendFollow();moveTimeline(afterX,afterY);drawAll();}
 },{passive:false});
 scroller.addEventListener('keydown',event=>{
   if(!['PageUp','PageDown'].includes(event.key)||event.ctrlKey||event.metaKey||event.altKey)return;
   const direction=event.key==='PageDown'?1:-1,axis=event.shiftKey?'scrollLeft':'scrollTop',page=event.shiftKey?scroller.clientWidth-74:scroller.clientHeight-80,max=event.shiftKey?scroller.scrollWidth-scroller.clientWidth:scroller.scrollHeight-scroller.clientHeight;
   const before=scroller[axis],after=Math.max(0,Math.min(max,before+Math.max(1,page)*direction));
-  if(after!==before){event.preventDefault();event.stopPropagation();scroller[axis]=after;}
+  if(after!==before){event.preventDefault();event.stopPropagation();suspendFollow();moveTimeline(axis==='scrollLeft'?after:undefined,axis==='scrollTop'?after:undefined);drawAll();}
 });
-window.addEventListener('resize' ,()=>{resizeTimeline();drawAll();});document.addEventListener('visibilitychange',()=>{if(!document.hidden)drawAll();});
+window.addEventListener('resize',()=>{resizeTimeline();followPosition(currentPosition(),{immediate:true});drawAll();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(state.playing)followPosition(currentPosition(),{immediate:true});drawAll();}});
+try{state.follow=localStorage.getItem(followStorageKey)==='true'?'following':'off';}catch(_){}
+rememberScroll();renderFollow();
 loadLibrary();
 if(window.location?.search){
   const params=new URLSearchParams(window.location.search),initialJob=params.get('job');
@@ -558,8 +701,8 @@ if(window.location?.search){
     }
     const position=Number(params.get('t'));
     if(params.has('t')&&Number.isFinite(position)&&position>=0&&position<=state.duration){
-      seek(position);const scroll=$('#timeline-scroller');scroll.scrollLeft=Math.max(0,position*pixelsPerSecond()-(scroll.clientWidth-74)*.35);
-      const note=activeNotes()[activeNoteIndex(position)];if(note)scroll.scrollTop=Math.max(0,scroll.scrollTop+midiY(note.midi)-(scroll.clientHeight+80)/2);
+      seek(position);const scroll=$('#timeline-scroller');moveTimeline(position*pixelsPerSecond()-(scroll.clientWidth-74)*.35);
+      const note=activeNotes()[activeNoteIndex(position)];if(note)moveTimeline(undefined,scroll.scrollTop+midiY(note.midi)-(scroll.clientHeight+110)/2);
     }
     drawAll();
   });
