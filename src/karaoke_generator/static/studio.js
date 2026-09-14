@@ -389,10 +389,29 @@ function rowHeight(){return state.baseRow*state.heightZoom;}
 function midiY(midi){return 96+(state.midiMax-midi+.5)*rowHeight()-$('#timeline-scroller').scrollTop;}
 function noteLabels(note){
   const links=note.labels||state.learning?.note_text_links?.filter(link=>link.note_id===note.id);
-  if(links?.length)return links.map(link=>{const part=state.learning?.text_parts?.find(part=>part.id===link.part_id);return {...link,text:link.text||part?.text||'',context:link.status==='context',fallback:part?.kind==='whole-word-fallback'||part?.status==='fallback'||link.status==='fallback',approximate:['approximate','context'].includes(link.status)||part?.status==='approximate',reason:part?.reason,message:link.message||part?.message};});
+  if(links?.length)return links.map(link=>{const part=state.learning?.text_parts?.find(part=>part.id===link.part_id);return {...link,text:link.text||part?.text||'',context:link.context||link.status==='context'||link.kind==='lyric-context',fallback:link.fallback||link.kind==='whole-word-fallback'||part?.kind==='whole-word-fallback'||part?.status==='fallback'||link.status==='fallback',approximate:link.approximate||['approximate','context'].includes(link.status)||part?.status==='approximate',reason:link.reason||part?.reason,message:link.message||part?.message};});
   const words=state.words.filter(word=>word.links?.some(link=>link.note_id===note.id));
   if(words.length)return words.map(word=>({word_id:word.id,text:word.text,start:Math.max(note.start,word.start??note.start),end:Math.min(note.end,word.end??note.end),fallback:true,reason:'часть слова не определена'}));
   return [{text:'Нет текста',start:note.start,end:note.end,missing:true}];
+}
+// Presentation only: adjacent links identify a run, never the text or the
+// generator's global "seen part" flag alone. A rest starts a fresh anchor.
+function timelineLabelSpans(notes){
+  const spans=[];let previous=null;
+  for(const note of notes){
+    const labels=noteLabels(note);
+    for(const interval of intervalsFor(note))for(const label of labels){
+      const start=Math.max(interval.start,label.start??interval.start),end=Math.min(interval.end,label.end??interval.end);
+      if(end<=start)continue;
+      const identified=label.part_id!=null&&label.part_id!==''&&label.word_id!=null&&label.word_id!==''&&!label.context&&!label.missing;
+      const continued=Boolean(identified&&previous?.identified&&label.continuation===true
+        &&label.part_id===previous.label.part_id&&label.word_id===previous.label.word_id
+        &&Math.abs(start-previous.end)<1e-6);
+      const span={note,label,start,end,identified,continued,group:continued?previous.group:{}};
+      spans.push(span);previous=span;
+    }
+  }
+  return spans;
 }
 function noteName(midi, bilingual=false){const latin=['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'],ru=['До','До♯','Ре','Ре♯','Ми','Фа','Фа♯','Соль','Соль♯','Ля','Ля♯','Си'],pitch=Math.round(midi),octave=Math.floor(pitch/12)-1,index=(pitch%12+12)%12;return bilingual?`${ru[index]}${octave} (${latin[index]}${octave})`:`${latin[index]}${octave}`;}
 function activeNoteIndex(position){return activeNotes().findIndex(note=>intervalsFor(note).some(interval=>interval.start<=position&&position<interval.end));}
@@ -417,7 +436,7 @@ function renderInspector(position=currentPosition()){
   for(const [id,node] of state.wordNodes){node.classList.toggle('active',id===activeWord?.id);node.classList.toggle('selected',id===state.selectedWord);}
   if(word){
     const approximate=isApproximateWord(word),extra=linkedWords.length>1?` · связаны слова: ${linkedWords.map(item=>item.text).join(', ')}`:'';
-    const labels=note?noteLabels(note).filter(label=>label.word_id===word.id):[],partCopy=labels.map(label=>`${label.text}${label.continuation?'—':''}${label.context?' · контекст лирики, слово здесь не подтверждено':label.fallback?' · часть слова не определена':label.approximate?' · граница части приблизительная':''}`).join(' / ');
+    const labels=note?noteLabels(note).filter(label=>label.word_id===word.id):[],partCopy=labels.map(label=>`${label.text}${label.continuation?'—':''}${label.context?' · контекст лирики, слово здесь не подтверждено':label.fallback?' · часть слова не определена':label.approximate?' · граница части приблизительная':''}${label.message?` · ${label.message}`:''}${label.reason?` · ${label.reason}`:''}`).join(' / ');
     $('#inspector-word').textContent=`${approximate?'≈ ':''}${word.text}`;$('#inspector-word-detail').textContent=`${Number.isFinite(word.start)?`${formatTime(word.start,false)}–${formatTime(word.end,false)}`:'≈ Время не определено'} · ${word.message||(approximate?'приблизительная привязка':'прямая привязка')}${extra}${partCopy?` · ${partCopy}`:''}${word.links?.length?'':' · Нет определимой ноты.'}`;
   }else{
     $('#inspector-word').textContent='Нет слова';$('#inspector-word-detail').textContent=note?'У этой ноты нет связи с текстом.':'В этой позиции нет слова и ноты.';
@@ -449,16 +468,24 @@ function drawTimeline(position){
       if(interval.end<startTime||interval.start>endTime)continue;
       const x=keyboard+interval.start*pps-scroller.scrollLeft,w=Math.max(1,(interval.end-interval.start)*pps);
       ctx.fillStyle=highlightedNotes.has(note.id)?'#a9abff':note.uncertain?'#6669ae':'#8587f7';ctx.fillRect(x,y,w,h);
-      for(const label of noteLabels(note)){
-        const start=Math.max(interval.start,label.start??interval.start),end=Math.min(interval.end,label.end??interval.end);
-        if(end<=start)continue;
-        // A long note may start outside the viewport. Keep its text at the
-        // visible part of the note instead of clipping the whole inscription.
-        const text=`${label.context?'Контекст: ':label.fallback||label.approximate?'≈ ':''}${label.text}${label.continuation?'—':''}`,labelX=Math.max(keyboard,keyboard+start*pps-scroller.scrollLeft),labelWidth=Math.max(0,keyboard+end*pps-scroller.scrollLeft-labelX);
-        ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width;
-        labels.push({text,x:labelX,y,h,w:labelWidth,measured,inside:measured+8<=labelWidth&&h>=18,missing:label.missing});
-      }
     }
+  }
+  // Visibility, not playback time or the previous frame, chooses one readable
+  // anchor per run. Hidden pitches and hidden parts of a long note do not count.
+  const anchored=new Set();
+  for(const span of timelineLabelSpans(activeNotes())){
+    const {note,label,start,end,group,continued}=span;
+    if(end<=startTime||start>=endTime)continue;
+    const y=midiY(note.midi+.38),h=Math.max(3,rowHeight()*.76);if(y+h<=80||y>=height)continue;
+    const continuationOnly=continued&&anchored.has(group),resumed=continued||start<startTime;
+    const prefix=label.context?'Контекст: ':label.fallback||label.approximate?'≈ ':'';
+    const suffix=label.context?'':span.identified?(resumed?' ─':''):(label.continuation?'—':'');
+    const text=continuationOnly?`${prefix}─`:`${prefix}${label.text}${suffix}`;
+    const labelX=Math.max(keyboard,keyboard+start*pps-scroller.scrollLeft),labelEnd=Math.min(width,keyboard+end*pps-scroller.scrollLeft);
+    ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width;
+    const inside=measured+8<=labelEnd-labelX&&h>=18&&y>=80&&y+h<=height;
+    labels.push({text,x:Math.max(keyboard,Math.min(labelX,width-measured-8)),noteX:labelX,y,h,measured,inside,missing:label.missing});
+    anchored.add(group);
   }
   const frames=state.melody?.pitch_frames||[];ctx.strokeStyle='rgba(88,216,255,.6)';ctx.lineWidth=1.4;ctx.beginPath();let drawing=false;const stride=Math.max(1,Math.floor(frames.length/12000));
   for(let i=0;i<frames.length;i+=stride){const frame=frames[i];if(frame.time<startTime||frame.time>endTime||!Number.isFinite(frame.midi)){drawing=false;continue;}const x=keyboard+frame.time*pps-scroller.scrollLeft,y=midiY(frame.midi);if(drawing)ctx.lineTo(x,y);else{ctx.moveTo(x,y);drawing=true;}}ctx.stroke();ctx.lineWidth=1;
@@ -472,7 +499,7 @@ function drawTimeline(position){
       if(baseline<94)baseline=label.y+label.h+15;
       baseline=Math.max(94,Math.min(height-4,baseline));
       occupied.push({x:label.x,end:label.x+label.measured+8,y:baseline});
-      ctx.strokeStyle='#8587f7';ctx.beginPath();ctx.moveTo(label.x+3,label.y);ctx.lineTo(label.x+3,baseline+2);ctx.stroke();
+      ctx.strokeStyle='#8587f7';ctx.beginPath();ctx.moveTo(label.noteX+3,label.y);ctx.lineTo(label.x+3,baseline+2);ctx.stroke();
       ctx.fillStyle='#111827';ctx.fillRect(label.x,baseline-12,label.measured+8,16);
     }
     ctx.fillStyle=label.inside?'#090b11':label.missing?'#aeb5c4':'#f4f6fb';ctx.font='500 12px -apple-system,sans-serif';ctx.fillText(label.text,label.x+4,baseline);

@@ -273,3 +273,132 @@ test('ten rapid speed choices coalesce cold server work to current and latest pr
   first.resolve({ok:true,json:async()=>({rate:.25,source_duration:303.726,artifacts:{}})});await Promise.all(pending);
   assert.equal(calls.length,2);assert.ok(calls[1].endsWith('/original/2'));assert.equal(h.run('state.rate'),2);assert.equal(h.run('state.position'),83);assert.equal(h.recorded.length,0);
 });
+
+// Observe the shipped Canvas renderer, rather than testing a grouping helper.
+function melismaCanvas(notes){
+  const h=harness(),text=[],bars=[];
+  const ctx=new Proxy({measureText:value=>({width:value.length*7}),
+    fillText(value,x,y){if(this.font==='500 12px -apple-system,sans-serif'&&y>=80)text.push({text:value,x,y});},
+    fillRect(x,y,w,height){if(['#8587f7','#a9abff','#6669ae'].includes(this.fillStyle))bars.push({x,y,w,height});}
+  },{get:(o,key)=>o[key]||(()=>{})});
+  h.node('#timeline-canvas').getContext=()=>ctx;
+  h.env.fixtureNotes=notes;
+  h.run('state.zoom=4;state.heightZoom=2;state.midiMax=65;state.learning={notes:fixtureNotes,text_parts:[]};state.words=[]');
+  return {...h,text,bars,draw(position=0){text.length=bars.length=0;h.run(`drawTimeline(${position})`);return text.map(call=>call.text);}};
+}
+function melismaNote(id,start,end,{midi=60,part='p',word='w',text='ma',continuation=true,...label}={}){
+  return {id,start,end,midi,labels:[{text,part_id:part,word_id:word,start,end,continuation,status:'confirmed',...label}]};
+}
+const threeNoteRun=()=>[melismaNote('a',1,2,{continuation:false}),melismaNote('b',2,3),melismaNote('c',3,4)];
+
+test('melisma draws one full anchor and two continuation marks without changing note geometry',()=>{
+  const h=melismaCanvas(threeNoteRun());
+  assert.deepEqual(h.draw(),['ma','─','─']);
+  assert.deepEqual(h.bars.map(bar=>[bar.x,bar.w]),[[186,112],[298,112],[410,112]]);
+  assert.ok(h.text.every(call=>call.x>=74&&call.x<1000&&call.y>=94&&call.y<=476));
+});
+
+test('melisma restores an anchor for horizontal entry, a clipped long note and return to the start',()=>{
+  const h=melismaCanvas(threeNoteRun()),scroll=h.node('#timeline-scroller');
+  scroll.scrollLeft=2.2*112;
+  assert.deepEqual(h.draw(2.3),['ma ─','─']);
+  assert.ok(h.text[0].x>=74);
+  assert.deepEqual(h.draw(3.5),['ma ─','─'],'Player time alone must not move the anchor');
+  scroll.scrollLeft=1.5*112;assert.deepEqual(h.draw(),['ma ─','─','─']);
+  scroll.scrollLeft=0;assert.deepEqual(h.draw(),['ma','─','─']);
+});
+
+test('melisma restores the anchor when the first pitch is above or below the viewport',()=>{
+  for(const midi of [72,42]){
+    const notes=threeNoteRun();notes[0].midi=midi;
+    const h=melismaCanvas(notes);h.run('state.midiMax=72');
+    h.node('#timeline-scroller').scrollTop=midi===72?50:0;
+    assert.deepEqual(h.draw(),['ma ─','─']);
+    h.node('#timeline-scroller').scrollTop=0;
+    h.run('state.heightZoom=.5');assert.deepEqual(h.draw(),['ma','─','─']);
+    h.run('state.heightZoom=2');h.node('#timeline-scroller').scrollTop=midi===72?50:0;
+    assert.deepEqual(h.draw(),['ma ─','─']);
+  }
+});
+
+test('melisma keeps partially visible pitch and right-edge anchors readable in a low canvas',()=>{
+  const h=melismaCanvas(threeNoteRun());
+  h.node('#timeline-scroller').scrollTop=140; // First row is clipped by the fixed header.
+  assert.deepEqual(h.draw(),['ma','─','─']);
+  assert.ok(h.text.every(call=>call.y>=94&&call.y<=476));
+  h.node('#timeline-scroller').scrollTop=0;
+  h.node('#timeline-canvas').height=200;
+  h.run('state.midiMax=60;state.zoom=32');
+  assert.deepEqual(h.draw(),['ma']);
+  assert.ok(h.text[0].x+2*7<1000,'A tiny visible edge must still show a full anchor');
+});
+
+test('melisma never joins repeated words, equal-spelling parts, restarted links or intervening hidden parts',()=>{
+  for(const changes of [{word:'second'},{part:'second'},{continuation:false}]){
+    const h=melismaCanvas([melismaNote('a',1,2,{continuation:false}),melismaNote('b',2,3,changes)]);
+    assert.deepEqual(h.draw(),['ma','ma']);
+  }
+  const h=melismaCanvas([melismaNote('a',1,2,{continuation:false}),melismaNote('hidden',2,3,{part:'other',midi:90}),melismaNote('b',3,4)]);
+  assert.deepEqual(h.draw(),['ma','ma']);
+});
+
+test('melisma preserves multiple parts within one note and excludes offscreen parts from anchoring',()=>{
+  const a=melismaNote('a',1,3,{continuation:false});
+  a.labels=[{...a.labels[0],end:2},{...a.labels[0],part_id:'p2',text:'ro',start:2,end:3}];
+  const h=melismaCanvas([a,melismaNote('b',3,4,{part:'p2',text:'ro'})]);
+  assert.deepEqual(h.draw(),['ma','ro','─']);
+  h.node('#timeline-scroller').scrollLeft=2.2*112;
+  assert.deepEqual(h.draw(),['ro ─','─'],'Hidden first part must not leave a phantom label');
+});
+
+test('melisma preserves pauses between notes and inside a legacy multi-interval event',()=>{
+  const h=melismaCanvas([melismaNote('a',1,2,{continuation:false}),melismaNote('b',3,4)]);
+  assert.deepEqual(h.draw(),['ma','ma']);
+  assert.deepEqual(h.bars.map(bar=>[bar.x,bar.w]),[[186,112],[410,112]]);
+  const held=melismaNote('held',1,4,{continuation:false});held.intervals=[{start:1,end:2},{start:3,end:4}];
+  const legacy=melismaCanvas([held]);assert.deepEqual(legacy.draw(),['ma','ma']);
+  assert.deepEqual(legacy.bars.map(bar=>[bar.x,bar.w]),[[186,112],[410,112]]);
+});
+
+test('melisma leaves context explicit even with continuation and matching IDs, then restarts the anchor',()=>{
+  for(const status of [{status:'context'},{kind:'lyric-context'},{context:true}]){
+    const h=melismaCanvas([melismaNote('a',1,2,{continuation:false}),melismaNote('b',2,3,status),melismaNote('c',3,4)]);
+    assert.deepEqual(h.draw(),['ma','Контекст: ma','ma']);
+  }
+});
+
+test('melisma retains approximate and fallback markers on every continuation and full inspector diagnostics',()=>{
+  for(const status of [{status:'approximate'},{status:'fallback'},{kind:'whole-word-fallback'},{approximate:true}]){
+    const notes=threeNoteRun().map(note=>({...note,labels:note.labels.map(label=>({...label,...status,message:'boundary estimate',reason:'weak_character_evidence'}))}));
+    const h=melismaCanvas(notes);assert.deepEqual(h.draw(),['≈ ma','≈ ─','≈ ─']);
+    h.run(`state.position=2.5;state.words=[{id:'w',text:'mama!',start:1,end:4,links:[{note_id:'a'},{note_id:'b'},{note_id:'c'}]}];renderInspector(2.5)`);
+    assert.match(h.node('#inspector-word-detail').textContent,/ma—/);
+    assert.match(h.node('#inspector-word-detail').textContent,/boundary estimate/);
+    assert.match(h.node('#inspector-word-detail').textContent,/weak_character_evidence/);
+    h.node('#next-note').click();assert.match(h.node('#inspector-word-detail').textContent,/ma—/);
+  }
+});
+
+test('melisma leaves insufficient legacy IDs and word-only fallback labels complete',()=>{
+  for(const missing of [{part:undefined},{word:undefined}]){
+    const h=melismaCanvas([melismaNote('a',1,2,{...missing,continuation:false}),melismaNote('b',2,3,missing)]);
+    // Defaults in the fixture are intentionally removed from the legacy payload.
+    for(const note of h.env.fixtureNotes)for(const label of note.labels)delete label['part' in missing?'part_id':'word_id'];
+    assert.deepEqual(h.draw(),['ma','ma—']);
+  }
+  const h=melismaCanvas([{id:'a',midi:60,start:1,end:2},{id:'b',midi:60,start:2,end:3}]);
+  h.run(`state.words=[{id:'w',text:'whole!',start:1,end:3,links:[{note_id:'a'},{note_id:'b'}]}]`);
+  assert.deepEqual(h.draw(),['≈ whole!','≈ whole!']);
+});
+
+test('melisma drawing across scales leaves canonical data and transport scheduling untouched',async()=>{
+  const h=melismaCanvas(threeNoteRun());
+  const before=h.run('JSON.stringify({learning:state.learning,melody:state.melody,words:state.words})');
+  await h.run('play()');const sources=h.recorded.slice(),schedule=sources.map(node=>[node.at,node.offset]);
+  for(const zoom of [.5,1,4,16,32])for(const height of [1,2,4,6]){
+    h.run(`state.zoom=${zoom};state.heightZoom=${height}`);h.draw(2.5);
+    assert.equal(h.run('JSON.stringify({learning:state.learning,melody:state.melody,words:state.words})'),before);
+  }
+  assert.deepEqual(h.recorded,sources);assert.deepEqual(h.recorded.map(node=>[node.at,node.offset]),schedule);
+  assert.ok(sources.every(node=>!node.stopped));
+});

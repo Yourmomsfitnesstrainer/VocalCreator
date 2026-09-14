@@ -141,6 +141,24 @@ async function runBrowserChecks(){
       report.measurements.text_repair={continued_label_visible:true,no_note_lyric_visible:true};
     }finally{ctx.fillText=fill;}
   });
+  await check('T8: melisma Canvas anchors follow both viewport axes without altering source notes',async()=>{
+    const canvas=$('#timeline-canvas'),ctx=canvas.getContext('2d'),fill=ctx.fillText,scroller=$('#timeline-scroller'),calls=[];
+    ctx.fillText=function(text,x,y,...rest){if(this.font.includes('12px')&&y>=80)calls.push({text,x,y});return fill.call(this,text,x,y,...rest);};
+    try{
+      const notes=[0,1,2].map(i=>({id:`melisma-${i}`,start:1+i,end:2+i,midi:i===0?65:61-i,
+        labels:[{part_id:'part',word_id:'word',text:'held',start:1+i,end:2+i,continuation:i>0,status:'approximate'}]}));
+      state.learning={notes,text_parts:[]};state.words=[];state.melody={notes:[],pitch_frames:[]};state.zoom=4;state.heightZoom=2;
+      state.midiMax=65;state.midiMin=40;state.baseRow=12;resizeTimeline();scroller.scrollLeft=0;scroller.scrollTop=0;
+      const before=JSON.stringify(notes),draw=()=>{calls.length=0;drawTimeline(2.5);return calls.map(call=>call.text).join('|');};
+      assert(draw()==='≈ held|≈ ─|≈ ─','Repeated full melisma labels');
+      scroller.scrollLeft=2.2*pixelsPerSecond();assert(draw()==='≈ held ─|≈ ─','Horizontal continuation lost its anchor');
+      scroller.scrollLeft=0;scroller.scrollTop=50;assert(draw()==='≈ held ─|≈ ─','Hidden first pitch consumed the visible anchor');
+      scroller.scrollTop=0;assert(draw()==='≈ held|≈ ─|≈ ─','Return did not restore natural anchor');
+      assert(calls.every(call=>call.x>=74&&call.x<canvas.clientWidth&&call.y>=94&&call.y<canvas.clientHeight),'Label escaped visible canvas');
+      assert(JSON.stringify(notes)===before,'Rendering mutated original note/label data');
+      report.measurements.melisma={horizontal_anchor:true,vertical_anchor:true,return_anchor:true,source_notes_unchanged:true};
+    }finally{ctx.fillText=fill;}
+  });
   await check('Q6: render recorded transport scheduling through OfflineAudioContext',async()=>{
     const rate=8000,duration=303.8,offline=new OfflineAudioContext(3,Math.ceil(duration*rate),rate),merger=offline.createChannelMerger(3);merger.connect(offline.destination);
     const calibration=offline.createBuffer(1,Math.ceil(state.duration*rate),rate);
