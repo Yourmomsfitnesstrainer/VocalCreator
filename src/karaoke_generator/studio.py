@@ -31,6 +31,12 @@ STUDIO_SCHEMA_VERSION = 1
 StudioProgressCallback = Callable[[str, str], None]
 
 
+def _prepare_syllable_score(output_dir: Path, job_id: str, manifest: dict) -> dict:
+    # Called only by an explicit analysis; reading a saved job never runs models.
+    from .syllable_score_storage import prepare_score
+    return prepare_score(output_dir, job_id, manifest)
+
+
 def run_studio(
     audio: Path,
     lyrics: Path,
@@ -361,6 +367,18 @@ def run_studio(
         stage("piano", "Синтез партии пианино", "complete")
     except Exception as exc:
         fail("piano", "Синтез партии пианино", exc, fatal=False)
+
+    try:
+        stage("syllables", "Подготовка слоговой партии", "running")
+        score = _prepare_syllable_score(output_dir, manifest["id"], manifest)
+        if score["status"] not in {"ready", "partial"}:
+            raise RuntimeError(f"Слоговая партия не подготовлена: {score.get('error') or score['status']}")
+        manifest["syllables"] = {"status": score["status"],
+                                  "base_analysis_key": score.get("base_analysis_key"),
+                                  "revision": score.get("revision", 0)}
+        stage("syllables", "Подготовка слоговой партии", "complete")
+    except Exception as exc:
+        fail("syllables", "Слоговая партия требует повторной подготовки", exc, fatal=False)
 
     return _finish(manifest_path, manifest, started)
 

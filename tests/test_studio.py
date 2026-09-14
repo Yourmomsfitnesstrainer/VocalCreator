@@ -1,10 +1,18 @@
 import json
 import wave
 from copy import deepcopy
+import pytest
 
 from karaoke_generator.config import DEFAULT_CONFIG
 from karaoke_generator.models import TimedWord
 from karaoke_generator.studio_models import PitchFrame
+
+
+@pytest.fixture(autouse=True)
+def no_model_syllable_preparation(monkeypatch):
+    from karaoke_generator import studio
+    monkeypatch.setattr(studio, "_prepare_syllable_score", lambda *args: {
+        "status": "ready", "base_analysis_key": "test-score", "revision": 0})
 
 
 def _audio(path, duration=1.0):
@@ -41,6 +49,8 @@ def test_provided_vocal_builds_complete_audio_only_result(tmp_path, monkeypatch)
 
     assert manifest["status"] == "complete"
     assert manifest["stages"]["pitch"]["processing_seconds"] >= 0
+    assert manifest["stages"]["syllables"]["status"] == "complete"
+    assert manifest["syllables"]["base_analysis_key"] == "test-score"
     assert manifest["runtime"]["peak_rss_bytes"] > 0
     assert manifest["separation"]["status"] == "provided_vocal"
     assert "instrumental.wav" not in manifest["artifacts"]
@@ -91,3 +101,27 @@ def test_mix_never_publishes_original_as_vocal_when_separator_is_missing(tmp_pat
     assert "vocals.wav" not in manifest["artifacts"]
     assert not (output / "vocals.wav").exists()
     assert (output / "lyrics.txt").exists()
+
+
+def test_score_failure_keeps_completed_acoustic_artifacts(tmp_path, monkeypatch):
+    from karaoke_generator import studio
+    audio, lyrics, output = tmp_path / "voice.wav", tmp_path / "lyrics.txt", tmp_path / "result"
+    _audio(audio)
+    lyrics.write_text("one two")
+    monkeypatch.setattr(studio, "cached_timing", _timing)
+    monkeypatch.setattr(studio, "cached_pitch", _pitch)
+    seen = {}
+
+    def fail_score(directory, job_id, manifest):
+        import hashlib
+        for name in ("melody.json", "piano.wav", "vocals.wav", "lyrics.txt"):
+            seen[name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+        return {"status": "failed", "error": "test score failure"}
+
+    monkeypatch.setattr(studio, "_prepare_syllable_score", fail_score)
+    manifest = studio.run_studio(audio, lyrics, output, deepcopy(DEFAULT_CONFIG), input_type="vocal")
+    assert manifest["status"] == "partial"
+    assert manifest["errors"][-1]["stage"] == "syllables"
+    assert manifest["stages"]["piano"]["status"] == "complete"
+    import hashlib
+    assert seen == {name: hashlib.sha256((output / name).read_bytes()).hexdigest() for name in seen}

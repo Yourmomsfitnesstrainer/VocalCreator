@@ -135,6 +135,7 @@ def _run_studio_job(
     pitch_backend: str,
     separator_backend: str,
 ) -> None:
+    display_input = dict(_read_manifest(job_id).get("input") or {})
     config = load_config()
     config["alignment"]["language"] = language
     config["pitch"]["backend"] = pitch_backend
@@ -169,6 +170,12 @@ def _run_studio_job(
             manifest = dict(STUDIO_JOBS[job_id])
         manifest.update(status="failed", stage_label="Анализ остановлен")
         manifest.setdefault("errors", []).append({"stage": "internal", "message": str(exc)})
+    # Staged inputs have generic filenames. Preserve the uploaded display names
+    # so two independent songs do not both appear as "audio.mp3" in the library.
+    for field in ("audio_name", "lyrics_name"):
+        if display_input.get(field):
+            manifest.setdefault("input", {})[field] = display_input[field]
+    write_json(_manifest_path(job_id), manifest)
     _store_active(job_id, manifest)
 
 

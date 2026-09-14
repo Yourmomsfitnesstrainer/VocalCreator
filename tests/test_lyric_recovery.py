@@ -9,6 +9,24 @@ from karaoke_generator.studio_models import NoteEvent
 from karaoke_generator.syllables import canonical_words
 
 
+def test_hyphenated_lyrics_do_not_pass_ctc_blank_as_a_target():
+    import torch
+    import torchaudio
+    from karaoke_generator.lyric_recovery import _ctc_targets
+    words = [{"text": "A-b"}, {"text": "--"}, {"text": "a"}]
+    before = deepcopy(words)
+    tokens, ranges, blank = _ctc_targets(words, {"-": 0, "|": 1, "a": 2, "b": 3})
+    assert tokens == [2, 3, 1, 2] and blank == 0
+    assert ranges == [(0, 2, ["A", "b"]), (2, 2, []), (3, 4, ["a"])]
+    # The real forced-align operator used by recovery must accept this target.
+    emissions = torch.full((1, 9, 4), -8.)
+    for i, token in enumerate([0, 2, 0, 3, 0, 1, 0, 2, 0]):
+        emissions[0, i, token] = 0.
+    paths, scores = torchaudio.functional.forced_align(emissions, torch.tensor([tokens], dtype=torch.int32), blank=blank)
+    assert [s.token for s in torchaudio.functional.merge_tokens(paths[0], scores[0], blank=blank)] == tokens
+    assert words == before
+
+
 def test_paragraph_onsets_stop_verse_tail_from_consuming_next_chorus_but_reject_isolated_asr_word():
     from karaoke_generator.lyric_recovery import _paragraph_anchors
     words = canonical_words("End verse\n\nI know\n\nWhen you", None, 30)

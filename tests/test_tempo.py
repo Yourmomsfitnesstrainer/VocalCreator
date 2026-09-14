@@ -167,3 +167,109 @@ def test_mismatched_track_timeline_and_unsafe_track_names_are_rejected(tracks, t
         tempo.prepare_tempo(tracks, tmp_path / "derived", 1, 4)
     with pytest.raises(ValueError, match="доступные"):
         tempo.prepare_tempo({"../piano": tracks["piano"]}, tmp_path / "derived", 1, 4)
+
+
+def change_tail_frames(path, delta):
+    """Preserve every existing PCM sample except an explicitly removed tail."""
+    with wave.open(str(path), "rb") as reader:
+        params = reader.getparams()
+        pcm = reader.readframes(reader.getnframes())
+    sample_bytes = 2 * params.nchannels
+    adjusted = pcm + bytes(delta * sample_bytes) if delta > 0 else pcm[:delta * sample_bytes]
+    with wave.open(str(path), "wb") as writer:
+        writer.setparams(params)
+        writer.writeframes(adjusted)
+
+
+@pytest.mark.parametrize("delta", [-1, 1])
+@pytest.mark.parametrize("rate", [1, .5])
+def test_one_tail_sample_is_normalized_only_in_derived_tracks(tracks, tmp_path, engine, monkeypatch, delta, rate):
+    change_tail_frames(tracks["piano"], delta)
+    before = {name: path.read_bytes() for name, path in tracks.items()}
+    if rate == 1:
+        monkeypatch.setattr(tempo, "_rubberband", lambda: pytest.fail("1x requested Rubber Band"))
+    data, directory = tempo.prepare_tempo(tracks, tmp_path / "derived", rate, 4)
+    assert data["source_tail_adjustment"] == {
+        "policy": "final-sample-only-v1", "target_frames": 176400,
+        "track_frame_deltas": {"piano": -delta}}
+    assert data["source_format"]["piano"]["frames"] == 176400 + delta
+    assert before == {name: path.read_bytes() for name, path in tracks.items()}
+    attacks = []
+    for name, frequency in (("vocals", 440), ("instrumental", 660), ("piano", 880)):
+        signal, sr = read_audio(directory / f"{name}.wav")
+        assert len(signal) == data["frames"] == round(176400 / rate)
+        if rate == 1:
+            original, _ = read_audio(tracks[name])
+            np.testing.assert_array_equal(signal[:min(len(original), len(signal))], original[:len(signal)])
+            if len(original) < len(signal):
+                np.testing.assert_array_equal(signal[-1], [0, 0])
+        else:
+            observed = frequency_of(signal[round(.6 / rate * sr):round(1 / rate * sr), 0], sr)
+            assert abs(1200 * math.log2(observed / frequency)) < 5
+            attacks.append(onset_near(signal[:, 0], .4 / rate, sr))
+    if rate != 1:
+        assert max(abs(attack - .4 / rate) for attack in attacks) <= .05
+        assert np.ptp(attacks) <= .02
+    with monkeypatch.context() as patch:
+        patch.setattr(tempo, "_join_tracks", lambda *a, **k: pytest.fail("normalized cache rebuilt"))
+        again, same = tempo.prepare_tempo(tracks, tmp_path / "derived", rate, 4)
+    assert same == directory and again == data
+
+
+def test_equal_length_inputs_keep_legacy_key_and_output_bytes(tracks, tmp_path):
+    data, directory = tempo.prepare_tempo(tracks, tmp_path / "derived", 1, 4)
+    legacy_identity = {"algorithm": "rubberband-r3-offline-joint-v3-1", "runtime": "identity-pcm16",
+        "parameters": {"engine": "R3", "processing": "offline", "pitch_scale": 1.0,
+                       "channels": "together", "sample_format": "PCM_16", "origin_seconds": 0,
+                       "duration_rounding": "nearest-sample"},
+        "rate": 1.0, "source_duration": 4.0,
+        "source_sha256": {name: tempo._sha256(path) for name, path in sorted(tracks.items())},
+        "source_format": {name: tempo._wave_info(path) for name, path in sorted(tracks.items())}}
+    assert "source_tail_adjustment" not in data
+    assert data["cache_key"] == tempo._fingerprint(legacy_identity)
+    for name, path in tracks.items():
+        assert (directory / f"{name}.wav").read_bytes() == path.read_bytes()
+
+
+@pytest.mark.parametrize("delta", [-2, 2])
+def test_two_sample_track_mismatch_still_fails_before_rendering(tracks, tmp_path, monkeypatch, delta):
+    change_tail_frames(tracks["piano"], delta)
+    monkeypatch.setattr(tempo, "_rubberband", lambda: pytest.fail("rejected mismatch requested engine"))
+    with pytest.raises(ValueError, match="одинаковую"):
+        tempo.prepare_tempo(tracks, tmp_path / "derived", .5, 4)
+    assert not (tmp_path / "derived").exists()
+
+
+@pytest.mark.parametrize("delta", [-1, 1])
+def test_tail_adjustment_does_not_hide_truncated_pcm_data(tracks, tmp_path, delta):
+    change_tail_frames(tracks["piano"], delta)
+    # A header allowing a one-sample adjustment must never excuse a missing
+    # actual sample. This covers both the short pad and ignored long tail paths.
+    path = tracks["piano"]
+    path.write_bytes(path.read_bytes()[:-4])
+    before = {name: path.read_bytes() for name, path in tracks.items()}
+    with pytest.raises(ValueError, match="обрезана"):
+        tempo.prepare_tempo(tracks, tmp_path / "derived", 1, 4)
+    assert list((tmp_path / "derived/tempo-v3").iterdir()) == []
+    assert before == {name: path.read_bytes() for name, path in tracks.items()}
+
+
+def test_last_sample_padding_works_across_read_block_boundary(tmp_path):
+    count = tempo._BLOCK_FRAMES + 1
+    paths = {"vocals": write_audio(tmp_path / "vocals.wav", np.ones(count) * .2),
+             "piano": write_audio(tmp_path / "piano.wav", np.ones(count - 1) * .4)}
+    info = {name: tempo._wave_info(path) for name, path in paths.items()}
+    joined = tmp_path / "joint.wav"
+    tempo._join_tracks(paths, info, joined, frames=count)
+    samples, _ = read_audio(joined)
+    assert len(samples) == count and samples[-1, 0] > .19 and samples[-1, 1] == 0
+    assert np.all(samples[:-1, 1] > .39)
+
+
+def test_corrupt_tail_policy_is_rejected_from_cache(tracks, tmp_path):
+    change_tail_frames(tracks["piano"], 1)
+    data, directory = tempo.prepare_tempo(tracks, tmp_path / "derived", 1, 4)
+    data["source_tail_adjustment"]["target_frames"] -= 1
+    (directory / "tempo.json").write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="повреждён"):
+        tempo.prepare_tempo(tracks, tmp_path / "derived", 1, 4)

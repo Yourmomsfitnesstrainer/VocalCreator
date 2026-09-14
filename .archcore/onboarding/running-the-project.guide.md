@@ -5,7 +5,9 @@ tags:
   - "onboarding"
 ---
 
-Читатель и исполнитель — владелец локальной демки 0.1; задача — запустить студию и повторно открыть проверенную песню.
+
+
+Читатель и исполнитель — владелец локальной демки 0.1; задача — запустить студию и открыть результаты обеих постоянных песен.
 
 ## Prerequisites
 
@@ -45,13 +47,17 @@ PYTHONPATH=src .venv/bin/python -m karaoke_generator.cli web --host 127.0.0.1 --
 
 ## Verification
 
-`PYTHONPATH=src .venv/bin/python scripts/check_reference_song.py --check-files-only` проверяет целостность включённых в Git файлов без сервера и моделей. Downloads и textutil для этого прогона не нужны; UTF-8 TXT уже сохранён рядом с исходным RTF.
+Сначала выполните `PYTHONPATH=src .venv/bin/python scripts/prepare_syllable_references.py`. Сценарий проверяет MP3/RTF пользователя и сохраняет копии и TXT вне Git.
 
-`PYTHONPATH=src .venv/bin/python scripts/check_reference_song.py --url http://127.0.0.1:8080` сверяет MP3, оригинальный RTF и готовый TXT из @references/seekae-test-and-recognise/, ждёт завершения анализа при отсутствии готового задания, проверяет 305 слов и проверяет полную мелодию и выбранные скорости. При изменении исходного анализа применяется `--reanalyze`; смена номера версии его не требует.
+`PYTHONPATH=src .venv/bin/python scripts/check_reference_song.py --check-files-only` проверяет обе новые пары: Sputnik (198 слов, en) и Mujuice — Журавли (Misha Mishenko Remix) (118 слов, ru). Каталог источников: ~/Library/Application Support/VocalCreator/references/syllable-score-v1/.
+
+`PYTHONPATH=src .venv/bin/python scripts/check_reference_song.py --url http://127.0.0.1:8080` проверяет обе песни через реальный локальный продукт, полную мелодию, скорости и слоговую стадию. Отдельные отчёты сохраняются вне Git; готовые результаты открываются в двух новых вкладках desktop-браузера. --song sputnik/mujuice служит отдельной диагностике, --reanalyze создаёт свежий анализ при изменении верхних стадий.
+
+Поручение пользователя от 14 сентября 2026 года отменяет запуск Seekae/Abracadabra через анализ. Старые исходники, разрешённые в Git, и результаты сохраняются как история. Новые MP3/RTF/TXT и результаты в Git не добавляются.
 
 Для отдельной браузерной проверки запустите `PYTHONPATH=src .venv/bin/python scripts/check_studio_browser.py --port 8082 --output output/browser-qa --data-dir output/browser-qa/data`. Откройте `http://127.0.0.1:8082/__checks`; кнопка запуска сохраняет измерения в browser-report.json. Затем откройте песню в новой вкладке и проверьте воспроизведение.
 
-Проверка BL-004–BL-009 использовала `output/karaoke-reading-qa/data` на порту 8086; исходная библиотека остаётся отдельной. Исходные файлы Seekae разрешены пользователем к хранению в Git; остальные аудио, текст, кеши и отчёты output остаются локальными. Расширение набора до трёх английских и трёх русских песен записано в @docs/backlog.md.
+Проверка BL-004–BL-009 использовала `output/karaoke-reading-qa/data` на порту 8086; исходная библиотека остаётся отдельной. Исторические исходники Seekae и Abracadabra сохранены в references; текущие пары Sputnik/Mujuice и все производные файлы остаются локальными. Расширение набора до трёх английских и трёх русских песен записано в @docs/backlog.md.
 
 ## Common Issues
 

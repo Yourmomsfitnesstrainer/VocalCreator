@@ -25,3 +25,12 @@ references/seekae-test-and-recognise/*
 !references/seekae-test-and-recognise/lyrics.txt
 !references/seekae-test-and-recognise/manifest.json
 !references/seekae-test-and-recognise/README.md
+
+# Second registered example; preserve original UTF-16 and upload-ready UTF-8.
+!references/sbpch-abracadabra/
+references/sbpch-abracadabra/*
+!references/sbpch-abracadabra/audio.mp3
+!references/sbpch-abracadabra/lyrics-source.txt
+!references/sbpch-abracadabra/lyrics.txt
+!references/sbpch-abracadabra/manifest.json
+!references/sbpch-abracadabra/README.md

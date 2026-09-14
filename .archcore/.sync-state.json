@@ -311,6 +311,156 @@
       "source": "vocal-studio/reading-and-karaoke-follow-implementation.plan.md",
       "target": "conventions/reference-song-acceptance.rule.md",
       "type": "depends_on"
+    },
+    {
+      "source": "vocal-studio/confirmed-lyric-occurrences.spec.md",
+      "target": "vocal-studio/confirmed-lyrics.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/confirmed-performance-view.spec.md",
+      "target": "vocal-studio/confirmed-lyrics.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/confirmed-performance-view.spec.md",
+      "target": "vocal-studio/confirmed-lyric-occurrences.spec.md",
+      "type": "depends_on"
+    },
+    {
+      "source": "vocal-studio/confirmed-lyrics-implementation.plan.md",
+      "target": "vocal-studio/confirmed-lyric-occurrences.spec.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/confirmed-lyrics-implementation.plan.md",
+      "target": "vocal-studio/confirmed-performance-view.spec.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/confirmed-lyric-occurrences.spec.md",
+      "target": "vocal-studio/vocal-parts-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/confirmed-performance-view.spec.md",
+      "target": "vocal-studio/reading-and-karaoke-follow.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/confirmed-performance-view.spec.md",
+      "target": "vocal-studio/vocal-playback-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/confirmed-lyrics.prd.md",
+      "target": "vocal-studio/working-demo-baseline.adr.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/confirmed-lyrics-implementation.plan.md",
+      "target": "conventions/reference-song-acceptance.rule.md",
+      "type": "depends_on"
+    },
+    {
+      "source": "vocal-studio/confirmed-lyric-occurrences.spec.md",
+      "target": "architecture/lyrics-alignment.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-editor.prd.md",
+      "target": "vocal-studio/confirmed-lyrics.prd.md",
+      "type": "supersedes"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-editor.prd.md",
+      "target": "vocal-studio/confirmed-lyric-occurrences.spec.md",
+      "type": "supersedes"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-editor.prd.md",
+      "target": "vocal-studio/confirmed-performance-view.spec.md",
+      "type": "supersedes"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-editor.prd.md",
+      "target": "vocal-studio/confirmed-lyrics-implementation.plan.md",
+      "type": "supersedes"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-editor.prd.md",
+      "target": "vocal-studio/vocal-parts-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-editor.prd.md",
+      "target": "vocal-studio/vocal-playback-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-editor.prd.md",
+      "target": "vocal-studio/reading-and-karaoke-follow.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-editor.prd.md",
+      "target": "conventions/reference-song-acceptance.rule.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-editor.prd.md",
+      "target": "lyrics-timing/acoustic-evaluation.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/manual-lyrics-layer.spec.md",
+      "target": "vocal-studio/manual-lyrics-editor.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/manual-analysis-comparisons.spec.md",
+      "target": "vocal-studio/manual-lyrics-editor.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/manual-analysis-comparisons.spec.md",
+      "target": "vocal-studio/manual-lyrics-layer.spec.md",
+      "type": "depends_on"
+    },
+    {
+      "source": "vocal-studio/syllable-score.spec.md",
+      "target": "vocal-studio/manual-lyrics-editor.prd.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/syllable-score-implementation.plan.md",
+      "target": "vocal-studio/syllable-score.spec.md",
+      "type": "implements"
+    },
+    {
+      "source": "vocal-studio/syllable-score.spec.md",
+      "target": "vocal-studio/manual-lyrics-layer.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/syllable-score.spec.md",
+      "target": "vocal-studio/vocal-parts-v3.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/syllable-score.spec.md",
+      "target": "vocal-studio/reading-and-karaoke-follow.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/syllable-score-implementation.plan.md",
+      "target": "vocal-studio/manual-analysis-comparisons.spec.md",
+      "type": "related"
+    },
+    {
+      "source": "vocal-studio/syllable-score-implementation.plan.md",
+      "target": "conventions/reference-song-acceptance.rule.md",
+      "type": "depends_on"
     }
   ]
 }

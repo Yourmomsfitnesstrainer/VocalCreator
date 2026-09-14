@@ -1,0 +1,28 @@
+{
+  "id": "sbpch-abracadabra",
+  "title": "Самое Большое Простое Число — Abracadabra",
+  "language": "ru",
+  "source": "User-provided audio and lyrics",
+  "added_by_user_request": "2026-09-14",
+  "canonical_word_count": 323,
+  "duration_seconds": 315.260884,
+  "lyrics_conversion": {
+    "source_encoding": "UTF-16 LE with BOM",
+    "target_encoding": "UTF-8 without BOM",
+    "line_endings": "CRLF to LF; words, punctuation, lines and repeats preserved"
+  },
+  "files": {
+    "audio.mp3": {
+      "sha256": "9dd52aa44f31adecda4a7c029684c57efb49143971322d44c5d7154d92ccca30",
+      "bytes": 12695124
+    },
+    "lyrics-source.txt": {
+      "sha256": "bfbda61bb77c4470c384d7a8b8c743c107abf364e278514b2b69188614b86aec",
+      "bytes": 3744
+    },
+    "lyrics.txt": {
+      "sha256": "d126f426e4f661ae0ef4dfcfb44cbc532c7c4dea2de03ba174abf00cd1cee2a5",
+      "bytes": 3241
+    }
+  }
+}

@@ -70,24 +70,43 @@ def _rubberband() -> tuple[str, str]:
                      "(macOS: brew install rubberband). Обычное воспроизведение остаётся доступно.")
 
 
-def _join_tracks(paths: dict[str, Path], info: dict[str, dict], destination: Path) -> None:
+def _join_tracks(paths: dict[str, Path], info: dict[str, dict], destination: Path,
+                 *, frames: int | None = None) -> None:
     import numpy as np
 
     first = next(iter(info.values()))
+    frames = first["frames"] if frames is None else frames
+    if any(abs(item["frames"] - frames) > 1 for item in info.values()):
+        raise ValueError("Дорожки отличаются больше чем на один конечный отсчёт.")
     with ExitStack() as stack:
         readers = [stack.enter_context(wave.open(str(path), "rb")) for path in paths.values()]
+        for reader, item in zip(readers, info.values()):
+            if (reader.getnframes() != item["frames"] or reader.getnchannels() != item["channels"]
+                    or reader.getframerate() != item["sample_rate"] or reader.getsampwidth() != 2):
+                raise ValueError("Аудиодорожка обрезана или изменилась во время подготовки скорости.")
         writer = stack.enter_context(wave.open(str(destination), "wb"))
         writer.setparams((sum(item["channels"] for item in info.values()), 2,
                           first["sample_rate"], 0, "NONE", "not compressed"))
-        for offset in range(0, first["frames"], _BLOCK_FRAMES):
-            count = min(_BLOCK_FRAMES, first["frames"] - offset)
+        for offset in range(0, frames, _BLOCK_FRAMES):
+            count = min(_BLOCK_FRAMES, frames - offset)
             chunks = []
             for reader, item in zip(readers, info.values()):
                 samples = np.frombuffer(reader.readframes(count), dtype="<i2")
-                if samples.size != count * item["channels"]:
+                expected = min(count, max(0, item["frames"] - offset))
+                if samples.size != expected * item["channels"]:
                     raise ValueError("Аудиодорожка обрезана или изменилась во время подготовки скорости.")
-                chunks.append(samples.reshape(count, item["channels"]))
+                chunk = samples.reshape(expected, item["channels"])
+                if expected < count:
+                    # Only a genuine one-sample difference in the saved header
+                    # permits padding, and only at the common recording tail.
+                    if count - expected != 1 or offset + count != frames or item["frames"] != frames - 1:
+                        raise ValueError("Аудиодорожка обрезана или изменилась во время подготовки скорости.")
+                    chunk = np.pad(chunk, ((0, 1), (0, 0)))
+                chunks.append(chunk)
             writer.writeframesraw(np.concatenate(chunks, axis=1).tobytes())
+        for reader, item in zip(readers, info.values()):
+            if item["frames"] == frames + 1 and len(reader.readframes(1)) != 2 * item["channels"]:
+                raise ValueError("Аудиодорожка обрезана или изменилась во время подготовки скорости.")
 
 
 def _split_tracks(source: Path, destination: Path, info: dict[str, dict], frames: int) -> None:
@@ -126,6 +145,8 @@ def _read_cache(destination: Path, key: str, info: dict[str, dict], frames: int)
         data = json.loads((destination / "tempo.json").read_text(encoding="utf-8"))
         identity_keys = ("algorithm", "runtime", "parameters", "rate", "source_duration",
                          "source_sha256", "source_format")
+        if "source_tail_adjustment" in data:
+            identity_keys += ("source_tail_adjustment",)
         sample_rate = next(iter(info.values()))["sample_rate"]
         if (data["cache_key"] != key or _fingerprint({name: data[name] for name in identity_keys}) != key
                 or data["tracks"] != {name: f"{name}.wav" for name in info}
@@ -164,18 +185,29 @@ def prepare_tempo(track_paths: dict[str, Path], destination_root: Path, rate: fl
     with _PREPARE_LOCK:
         info = {name: _wave_info(path) for name, path in paths.items()}
         first = next(iter(info.values()))
-        if any(item["channels"] not in (1, 2) or item["frames"] != first["frames"]
-               or item["sample_rate"] != first["sample_rate"] for item in info.values()):
+        lengths = {item["frames"] for item in info.values()}
+        if (max(lengths) - min(lengths) > 1 or
+                any(item["channels"] not in (1, 2) or item["sample_rate"] != first["sample_rate"]
+                    for item in info.values())):
             raise ValueError("Дорожки должны иметь одинаковую частоту и длительность, по одному или два канала.")
         sample_rate = first["sample_rate"]
-        if not 8000 <= sample_rate <= 192000 or abs(first["frames"] - source_duration * sample_rate) > 1:
+        if (not 8000 <= sample_rate <= 192000 or
+                any(abs(item["frames"] - source_duration * sample_rate) > 1 for item in info.values())):
             raise ValueError("Длительность дорожек не совпадает с исходной временной шкалой.")
-        frames = round(first["frames"] / rate)
+        # Equal-length inputs retain exactly the historical key and behavior.
+        # Only differing headers use a common, nearest-sample timeline length.
+        source_frames = first["frames"] if len(lengths) == 1 else round(source_duration * sample_rate)
+        frames = round(source_frames / rate)
         binary, runtime = _rubberband() if rate != 1 else (None, "identity-pcm16")
         hashes = {name: _sha256(path) for name, path in paths.items()}
         identity = {"algorithm": TEMPO_VERSION, "runtime": runtime, "parameters": TEMPO_OPTIONS,
                     "rate": float(rate), "source_duration": float(source_duration),
                     "source_sha256": hashes, "source_format": info}
+        if len(lengths) > 1:
+            identity["source_tail_adjustment"] = {
+                "policy": "final-sample-only-v1", "target_frames": source_frames,
+                "track_frame_deltas": {name: source_frames - item["frames"]
+                                       for name, item in info.items() if item["frames"] != source_frames}}
         key = _fingerprint(identity)
         cache_root = Path(destination_root).resolve() / "tempo-v3"
         destination = cache_root / key
@@ -185,12 +217,20 @@ def prepare_tempo(track_paths: dict[str, Path], destination_root: Path, rate: fl
         cache_root.mkdir(parents=True, exist_ok=True)
         temporary = Path(tempfile.mkdtemp(prefix=".prepare-", dir=cache_root))
         try:
-            if rate == 1:
+            if rate == 1 and len(lengths) == 1:
                 for name, path in paths.items():
                     shutil.copyfile(path, temporary / f"{name}.wav")
+            elif rate == 1:
+                joint = temporary / "joint.wav"
+                _join_tracks(paths, info, joint, frames=source_frames)
+                _split_tracks(joint, temporary, info, frames)
+                joint.unlink()
             else:
                 joint, stretched = temporary / "joint.wav", temporary / "stretched.wav"
-                _join_tracks(paths, info, joint)
+                if len(lengths) == 1:
+                    _join_tracks(paths, info, joint)
+                else:
+                    _join_tracks(paths, info, joint, frames=source_frames)
                 try:
                     result = subprocess.run([binary, "--fine", "--centre-focus", "--quiet", "--tempo",
                                              str(rate), str(joint), str(stretched)],

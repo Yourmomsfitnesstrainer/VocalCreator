@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>VocalCreator Studio 0.1</title>
   <link rel="stylesheet" href="/static/studio.css">
+  <link rel="stylesheet" href="/static/syllable-editor.css">
 </head>
 <body>
   <a class="skip-link" href="#main-workspace">Перейти к временной шкале</a>
@@ -29,8 +30,8 @@
       <span title="Приблизительная нота, время или граница части"><b>≈</b> приблизительно</span>
       <span title="Продолжение слова или распева; в старых подписях также —"><b>─</b> продолжение</span>
       <span title="Временные связи слов перекрываются"><b>?</b> спорная граница</span>
-      <span title="Соседнее слово лирики, не подтверждённое на этом участке"><b>к</b> контекст</span>
-      <span title="Точная часть слова не определена, показано полное слово"><b>…</b> часть неизвестна</span>
+
+      <span title="Слоговая разбивка неизвестна, показано целое слово"><b>…</b> разбивка неизвестна</span>
       <span title="Нет связи с текстом или определимой ноты"><b>∅</b> нет связи</span>
       <span><i class="legend-note"></i> нота</span><span><i class="legend-pitch"></i> высота голоса</span>
     </div>
@@ -127,7 +128,7 @@
       <div id="workspace-empty" class="workspace-empty">
         <div class="empty-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
         <h2>Здесь появится вокальная мелодия</h2>
-        <p>Загрузите песню и точный текст. Студия покажет фактический pitch, устойчивые ноты и все слова на одной шкале.</p>
+        <p>Загрузите песню и точный текст. Студия покажет высоту голоса, устойчивые ноты и слоги над ними.</p>
         <ul><li><span class="legend-note"></span> полоска: распознанная нота</li><li><span class="legend-pitch"></span> линия: высота голоса</li><li><b>≈</b>: приблизительная привязка</li></ul>
       </div>
 
@@ -153,8 +154,8 @@
             <small id="inspector-detail">Переместите курсор или переходите между нотами.</small>
           </div>
           <div class="inspector-word">
-            <span>Слово</span>
-            <strong id="inspector-word">Нет слова</strong>
+            <span>Слог · слово</span>
+            <div class="inspector-word-current"><strong id="inspector-syllable">—</strong> <strong id="inspector-word">Нет слова</strong></div>
             <small id="inspector-word-status" aria-label="Связь с нотой отсутствует">∅</small>
             <div id="inspector-context" class="inspector-context" aria-label="Предыдущее и следующие слова"><span id="word-previous"></span><span id="word-next"></span><span id="word-after-next"></span></div>
           </div>
@@ -162,7 +163,7 @@
             <button id="previous-note" type="button" disabled aria-label="Предыдущая нота">Предыдущая</button>
             <output id="inspector-position" aria-live="polite">0 / 0</output>
             <button id="next-note" type="button" disabled aria-label="Следующая нота">Следующая</button>
-            <button id="inspector-more" type="button" aria-haspopup="dialog">Подробности</button>
+            <button id="inspector-more" type="button" aria-haspopup="dialog">Подробности</button><button id="inspector-correct" type="button" disabled>Исправить слог</button>
           </div>
         </section>
         <dialog id="inspector-dialog" aria-labelledby="inspector-dialog-title">
@@ -178,11 +179,13 @@
         <div class="overview-wrap"><span>Вся запись</span><canvas id="overview-canvas" aria-label="Обзор всей записи"></canvas></div>
         <div class="timeline-help"><span id="label-density-hint" hidden>Для остальных подписей увеличьте масштаб.</span><span>Колесо: по высоте · Shift + колесо: по времени · PageUp / PageDown: прокрутка</span></div>
         <div id="timeline-message" class="timeline-message"></div>
-        <section class="full-lyrics-section" aria-labelledby="full-lyrics-title"><div class="lyrics-heading"><h3 id="full-lyrics-title">Полный текст</h3><span id="lyrics-summary"></span></div><p class="lyrics-legend">≈ приблизительное время · без ноты: связь не определена. Выберите слово для просмотра.</p><div id="full-lyrics" class="full-lyrics" tabindex="0" aria-label="Все слова исходного текста"></div></section>
+        <section class="full-lyrics-section" aria-labelledby="full-lyrics-title"><div class="lyrics-heading"><h3 id="full-lyrics-title">Исходный текст TXT</h3><span id="lyrics-summary"></span></div><p class="lyrics-legend">≈ приблизительное время · без ноты: связь не определена. Выберите слово для просмотра.</p><div id="full-lyrics" class="full-lyrics" tabindex="0" aria-label="Все слова исходного текста"></div></section>
       </div>
     </section>
   </main>
 
+  <script src="/static/syllable-model.js" defer></script>
+  <script src="/static/syllable-editor.js" defer></script>
   <script src="/static/studio.js" defer></script>
 </body>
 </html>

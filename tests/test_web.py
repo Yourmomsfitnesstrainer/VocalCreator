@@ -81,6 +81,7 @@ def test_studio_job_persists_and_only_exposes_allowlisted_artifacts(tmp_path: Pa
     job_id = response.json()["job_id"]
     status = client.get(response.json()["status_url"]).json()
     assert status["status"] == "complete"
+    assert status["input"]["audio_name"] == "voice.wav"
     assert captured["config"]["separation"]["model"] == "melband-roformer-kim-vocals"
     assert set(status["artifacts"]) == {"vocals.wav", "studio.json"}
     assert client.get(status["artifacts"]["vocals.wav"]).status_code == 200

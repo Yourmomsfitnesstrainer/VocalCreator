@@ -12,8 +12,29 @@ from pathlib import Path
 
 from .timing_cache import file_sha256, fingerprint, package_versions, write_json
 
-RECOVERY_VERSION = "complete-lyrics-ctc-1"
+RECOVERY_VERSION = "complete-lyrics-ctc-2"
 OPTIONS = {"chunk_seconds": 20, "context_seconds": 1, "vocal_margin_seconds": .35}
+
+
+def _ctc_targets(words: list[dict], dictionary: dict) -> tuple[list[int], list, int]:
+    """Exclude the model's blank symbol, even when its spelling is punctuation.
+
+    The English torchaudio vocabulary spells CTC blank as '-'. A literal
+    hyphen in the supplied lyric must not become an alignment target. Keep
+    source spelling intact; only phonetic evidence excludes that symbol.
+    """
+    blank = dictionary.get("[pad]", dictionary.get("<pad>", 0))
+    separator = dictionary.get("|")
+    tokens, ranges = [], []
+    for word in words:
+        characters = [c for c in word["text"]
+                      if c != "|" and c.lower() in dictionary and dictionary[c.lower()] != blank]
+        if tokens and characters and separator is not None and separator != blank:
+            tokens.append(separator)
+        start = len(tokens)
+        tokens.extend(dictionary[c.lower()] for c in characters)
+        ranges.append((start, len(tokens), characters))
+    return tokens, ranges, blank
 
 
 def _paragraph_anchors(words: list[dict], bounds: tuple[float, float]) -> list[tuple[int, float]]:
@@ -208,17 +229,9 @@ def _align_complete_lyrics(audio: Path, words: list[dict], language: str,
     finally:
         torch.set_num_threads(previous_threads)
     emission, times = torch.cat(chunks), np.asarray(times)
-    tokens, ranges = [], []
-    for word in words:
-        characters = [c for c in word["text"] if c.lower() in dictionary and c != "|"]
-        if tokens and characters:
-            tokens.append(dictionary["|"])
-        start = len(tokens)
-        tokens.extend(dictionary[c.lower()] for c in characters)
-        ranges.append((start, len(tokens), characters))
+    tokens, ranges, blank = _ctc_targets(words, dictionary)
     if not tokens:
         return [], {"name": name, "device": "cpu"}
-    blank = dictionary.get("[pad]", dictionary.get("<pad>", 0))
     step = float(np.median(np.diff(times)))
     anchors = _paragraph_anchors(words, bounds)+[(len(words), bounds[1])]
     token_times = []

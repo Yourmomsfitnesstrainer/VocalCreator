@@ -584,3 +584,31 @@ test('BL006 current part contains symbols only; meanings remain accessible',()=>
   assert.equal(h.node('#inspector-word').textContent,'sing');assert.match(h.node('#inspector-word-status').textContent,/^[≈─…∅?к ]+$/u);
   assert.match(h.node('#inspector-word-status').attributes['aria-label'],/Приблизительная/);assert.match(h.node('#inspector-word-detail').textContent,/часть слова/);
 });
+
+function installSyllableFixture(h){
+  const M=require('../src/karaoke_generator/static/syllable-model.js'),{fixture,notes}=require('./syllable_fixture.cjs');const score=fixture();
+  h.env.scoreFixture=score;h.env.scoreNotes=notes;h.env.window.SyllableEditor={active:()=>true,document:()=>score,activeUnit:t=>M.activeAt(score,t),renderPosition(){},labels(note){return score.note_links.filter(l=>l.source_note_id===note.id).map(l=>{const u=score.units.find(u=>u.unit_id===l.unit_id),o=score.occurrences.find(o=>o.occurrence_id===u.occurrence_id);return {...l,unit_id:u.unit_id,part_id:u.unit_id,word_id:o.source_word_id,text:u.text,fallback:u.kind==='word_fallback',approximate:false};});}};
+  h.run("state.scoreNotes=scoreNotes;state.words=[{id:'w1',text:'ма',start:0,end:1.8,links:[]},{id:'w2',text:'молоко',start:2,end:4,links:[]}];state.zoom=8;state.presentation=null;state.selectedWord=null;state.duration=6;updatePitchRange();resizeTimeline();");return {M,score,notes};
+}
+test('S02 S18 effective syllable intervals drive activity through deleted regions and melisma gaps',()=>{
+  const h=harness(),{M,score}=installSyllableFixture(h);assert.equal(h.run('wordAt(.2).text'),'ма');assert.equal(h.run('wordAt(.45)'),undefined);Object.assign(score,M.removeLink(score,'l1'));h.run('state.presentation=null');assert.equal(h.run('wordAt(.2)'),undefined);assert.equal(h.run('noteLabels(activeNotes()[1])[0].continuation'),false);
+});
+test('S03 score divides text regions without changing the source note or adding a duplicate word lane',()=>{
+  const h=harness(),{M,score,notes}=installSyllableFixture(h),{mappings}=require('./syllable_fixture.cjs');Object.assign(score,M.split(score,'u2',['мо','ло','ко'],mappings,notes).document);h.run('state.presentation=null');const regions=h.run('noteWordRegions(activeNotes()[3])');assert.deepEqual(Array.from(regions,r=>[r.start,r.end,r.labels[0].text]),[[2,2.4,'мо'],[2.4,3.1,'ло'],[3.1,4,'ко']]);assert.equal(h.run('activeNotes().length'),4);
+  const calls=[],ctx=h.node('#timeline-canvas').getContext();ctx.fillText=(...args)=>calls.push(args);h.node('#timeline-canvas').getContext=()=>ctx;h.run('drawTimeline(2.8)');assert.ok(calls.some(args=>args[0]==='мо'));assert.ok(!calls.some(args=>['ма','молоко'].includes(args[0])&&args[2]>=50&&args[2]<80));
+});
+test('S18 reading entry in the gap before a continuation restores text at first visible continuation',()=>{
+  const h=harness();installSyllableFixture(h);h.run("state.follow='following';resizeTimeline();moveTimeline(.45*pixelsPerSecond(),0)");const labels=h.run("readingLabelLayout($('#timeline-canvas').getContext('2d'),{width:1000,height:480,startTime:.45,endTime:4}).labels");assert.ok(labels.some(l=>l.unitId==='u1'&&l.text.includes('ма')));assert.ok(labels.some(l=>l.unitId==='u1'&&l.text==='─'));
+});
+
+test('S15 old saved score binds its immutable piano and prevents mismatched tempo/current audio',async()=>{
+  const h=harness(),calls=[];h.env.savedData=data('full');h.run("state.learning={...savedData,cache_key:'current-base'};state.mode='full';state.position=12;");
+  h.env.fetch=async(url,options)=>{calls.push({url,options});return {ok:true,arrayBuffer:async()=>({duration:303.726})};};
+  h.env.snapshot={job_id:'job',base_analysis_key:'old-score',full_melody_key:'old-full',full_melody_mode:'pro',source_piano_url:'/immutable/piano.wav',notes:[{id:'old',start:0,end:1,midi:60}]};
+  await h.run('bindScorePiano(snapshot)');assert.deepEqual(calls.map(c=>c.url),['/immutable/piano.wav']);assert.equal(h.run('state.learning.cache_key'),'old-full');assert.equal(h.run('state.scorePianoMismatch'),true);assert.equal(h.run('state.position'),12);assert.equal(h.run('state.rate'),1);assert.equal(h.recorded.length,0);
+  await h.run('requestRate(.5)');assert.equal(calls.length,1);assert.equal(h.run('state.rate'),1);assert.match(h.node('#transport-status').textContent,/прежней нотной базе/);
+});
+test('S15 current score reuses matching decoded piano; missing old piano fails closed without substitute',async()=>{
+  const h=harness();h.run("state.learning={cache_key:'same'}");h.env.snapshot={source_piano_url:'/immutable.wav',full_melody_key:'same'};h.env.fetch=async()=>{throw Error('must not fetch same decoded piano');};await h.run('bindScorePiano(snapshot)');assert.equal(h.run('state.scorePianoMismatch'),false);
+  h.env.snapshot.full_melody_key='missing';await assert.rejects(()=>h.run('bindScorePiano(snapshot)'));assert.equal(h.run('state.buffers.piano'),undefined);assert.match(h.node('#transport-status').textContent,/Новая нотная база не подставлена/);
+});

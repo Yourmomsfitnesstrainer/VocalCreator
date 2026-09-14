@@ -2,7 +2,7 @@ const $ = selector => document.querySelector(selector);
 const stages = [
   ['preparation','Подготовка аудио и текста'],['separation','Выделение вокала и минуса'],
   ['alignment','Привязка точного текста'],['pitch','Анализ высоты голоса'],
-  ['melody','Сегментация нот'],['piano','Синтез пианино']
+  ['melody','Сегментация нот'],['piano','Синтез пианино'],['syllables','Подготовка слоговой партии']
 ];
 const state = {
   job:null, melody:null, alignment:null, words:[], peaks:[], duration:0, position:0,
@@ -61,7 +61,7 @@ async function loadLibrary(){
 $('#audio-input').addEventListener('change',event=>{$('#audio-name').textContent=event.target.files[0]?.name||'До 5 минут: нормальный рабочий пример';});
 $('#lyrics-input').addEventListener('change',event=>{$('#lyrics-name').textContent=event.target.files[0]?.name||'Слова и повторы не переписываются';});
 $('#studio-form').addEventListener('submit',async event=>{
-  event.preventDefault();clearError();const button=$('#analyze-button');button.disabled=true;button.querySelector('span').textContent='Проверяю файлы…';
+  event.preventDefault();if(window.SyllableEditor&&!window.SyllableEditor.canLeave())return;clearError();const button=$('#analyze-button');button.disabled=true;button.querySelector('span').textContent='Проверяю файлы…';
   try{
     const response=await fetch('/api/studio/jobs',{method:'POST',body:new FormData(event.currentTarget)}),body=await response.json();
     if(!response.ok)throw new Error(body.detail||'Не удалось начать анализ');
@@ -84,14 +84,16 @@ async function watchJob(jobId){
   await check();if(!['complete','partial','failed','interrupted'].includes(state.job?.status))state.poll=setInterval(check,900);
 }
 async function openJob(jobId){
+  if(window.SyllableEditor&&!window.SyllableEditor.canLeave())return;
   const request=++state.openRequest;clearInterval(state.poll);state.poll=null;
   clearError();try{const job=await json(`/api/studio/jobs/${jobId}`);if(request!==state.openRequest)return;setConnection(true);state.job=job;renderStages(job);document.querySelectorAll('.library-item').forEach(item=>item.classList.toggle('active',item.dataset.id===jobId));if(['queued','running'].includes(job.status))return watchJob(jobId);await applyJob(job);}catch(error){showError(`Не удалось открыть результат: ${error.message}`);setConnection(false);}
 }
 
 async function applyJob(job){
   const request=++state.jobRequest;
+  window.SyllableEditor?.reset();
   pause();state.modeAbort?.abort();++state.modeRequest;state.job=job;state.melody=null;state.alignment=null;state.words=[];state.buffers={};state.position=0;state.inspectorKey=null;
-  state.learning=null;state.mode=null;state.pendingMode=null;state.pendingRate=null;state.rate=state.desiredRate=1;state.desiredMode=null;state.v3Enabled=false;state.canonicalText='';state.canonicalWords=[];state.tempoCache.clear();state.originalBuffers={};state.selectedWord=null;state.selectedRegion=null;state.wordContextKey=null;state.presentation=null;state.labelLayout=null;state.wordNodes.clear();state.modeCache.clear();state.modeAvailability={};state.loadingAudio=true;clearTransportStatus();
+  state.scoreNotes=null;state.scorePianoMismatch=false;state.learning=null;state.mode=null;state.pendingMode=null;state.pendingRate=null;state.rate=state.desiredRate=1;state.desiredMode=null;state.v3Enabled=false;state.canonicalText='';state.canonicalWords=[];state.tempoCache.clear();state.originalBuffers={};state.selectedWord=null;state.selectedRegion=null;state.wordContextKey=null;state.presentation=null;state.labelLayout=null;state.wordNodes.clear();state.modeCache.clear();state.modeAvailability={};state.loadingAudio=true;clearTransportStatus();
   $('#play-button').disabled=true;renderModes();
   $('#workspace-empty').hidden=true;$('#studio-result').hidden=false;$('#mixer-section').hidden=false;
   const banner=$('#result-banner'),recovery=$('#result-recovery');banner.className=`result-banner ${job.status}`;$('#result-banner-text').textContent=job.status==='complete'?'Все стадии результата завершены.':job.status==='partial'?'Часть результата доступна; можно изучить сохранённое и повторить анализ.':job.status==='interrupted'?'Анализ прерван; сохранённые файлы доступны.':'Анализ завершился с ошибкой; сохранённые файлы доступны.';recovery.hidden=job.status==='complete';
@@ -121,6 +123,7 @@ async function applyJob(job){
   resizeTimeline();drawAll();
   state.v3Enabled=Object.keys(job.v3_modes||{}).length>0;renderModes();
   if(state.v3Enabled)await requestMode('full');
+  await window.SyllableEditor?.load(job.id,activeNotes());
   followPosition(currentPosition(),{immediate:true});drawAll();
 }
 
@@ -168,14 +171,14 @@ function renderDownloads(artifacts){
   const root=$('#downloads');root.replaceChildren();for(const [name,label] of allowed){if(!artifacts[name])continue;const link=document.createElement('a');link.href=artifacts[name];link.download=name;link.innerHTML=`<svg aria-hidden="true"><use href="#icon-download"/></svg><span>${label}</span>`;root.append(link);}
 }
 
-function activeNotes(){return state.learning?.notes||state.melody?.notes||[];}
+function activeNotes(){return state.scoreNotes||state.learning?.notes||state.melody?.notes||[];}
 function intervalsFor(note){return note.intervals||[{start:note.start,end:note.end}];}
 function modeName(mode){return mode?'Полная мелодия':'Исходный разбор';}
 function renderModes(){
   $('#v3-preparation').hidden=Boolean(state.learning);
   $('#prepare-v3').disabled=state.loadingAudio||!state.melody||Boolean(state.pendingMode);
   $('#prepare-v3').textContent=state.pendingMode?'Готовятся части слов…':'Подготовить части слов';
-  $('#speed-select').value=String(state.pendingRate??state.rate);
+  $('#speed-select').value=String(state.pendingRate??state.rate);for(const option of Array.from($('#speed-select').options||[]))option.disabled=Boolean(state.scorePianoMismatch)&&option.value!=='1';
 }
 function learningStatus(message,error=false){const node=$('#learning-status');node.textContent=message;node.hidden=!message;node.classList.toggle('error',error);}
 async function fetchBuffer(url,signal,expected){
@@ -189,6 +192,7 @@ async function requestMode(mode){
   state.desiredMode=mode;return requestPlayback(mode,state.pendingRate??state.rate);
 }
 async function requestRate(rate){
+  if(state.scorePianoMismatch&&rate!==1){showTransportStatus('Эта ручная ревизия привязана к прежней нотной базе. Для её сохранённого пианино доступна скорость 1×.');$('#speed-select').value=String(state.rate);return;}
   if(![.25,.5,.75,1,1.25,1.5,1.75,2].includes(rate)||state.loadingAudio||!state.job)return;
   state.desiredRate=rate;return requestPlayback(state.pendingMode||state.mode,rate);
 }
@@ -381,12 +385,12 @@ function tick(){
   if(value>=state.duration){pause();state.position=state.duration;updatePositionUI();drawAll();return;}
   followPosition(value);updatePositionUI(value);drawAll(value);state.frame=requestAnimationFrame(tick);
 }
-function updatePositionUI(value=currentPosition()){state.position=state.playing?state.position:value;$('#time-current').textContent=formatTime(value);$('#seek-slider').value=value;$('#canvas-seek').value=value;renderInspector(value);}
+function updatePositionUI(value=currentPosition()){state.position=state.playing?state.position:value;$('#time-current').textContent=formatTime(value);$('#seek-slider').value=value;$('#canvas-seek').value=value;renderInspector(value);window.SyllableEditor?.renderPosition(value);}
 
 $('#play-button').addEventListener('click',()=>state.playing||state.starting?pause():play());
 $('#seek-slider').addEventListener('input',event=>seek(event.target.value));$('#canvas-seek').addEventListener('input',event=>seek(event.target.value));
-$('#zoom-slider').addEventListener('input',event=>{const center=($('#timeline-scroller').scrollLeft+($('#timeline-scroller').clientWidth-74)/2)/pixelsPerSecond();state.zoom=Number(event.target.value);$('#zoom-value').textContent=`${state.zoom}×`;resizeTimeline();moveTimeline(center*pixelsPerSecond()-($('#timeline-scroller').clientWidth-74)/2);followPosition(currentPosition(),{immediate:true});drawAll();});
-$('#height-slider').addEventListener('input',event=>{const scroll=$('#timeline-scroller'),center=(scroll.clientHeight+80)/2,anchor=state.midiMax+.5-(center+scroll.scrollTop-126)/rowHeight();state.heightZoom=Number(event.target.value);$('#height-value').textContent=`${state.heightZoom}×`;resizeTimeline();moveTimeline(undefined,126+(state.midiMax+.5-anchor)*rowHeight()-center);followPosition(currentPosition(),{immediate:true});drawAll();});
+$('#zoom-slider').addEventListener('input',event=>{const center=($('#timeline-scroller').scrollLeft+($('#timeline-scroller').clientWidth-74)/2)/pixelsPerSecond();state.zoom=Number(event.target.value);window.SyllableEditor?.refresh();$('#zoom-value').textContent=`${state.zoom}×`;resizeTimeline();moveTimeline(center*pixelsPerSecond()-($('#timeline-scroller').clientWidth-74)/2);followPosition(currentPosition(),{immediate:true});drawAll();});
+$('#height-slider').addEventListener('input',event=>{const scroll=$('#timeline-scroller'),center=(scroll.clientHeight+80)/2,anchor=state.midiMax+.5-(center+scroll.scrollTop-(timelineGraphTop()+16))/rowHeight();state.heightZoom=Number(event.target.value);$('#height-value').textContent=`${state.heightZoom}×`;resizeTimeline();moveTimeline(undefined,(timelineGraphTop()+16)+(state.midiMax+.5-anchor)*rowHeight()-center);followPosition(currentPosition(),{immediate:true});drawAll();});
 $('#refresh-library').addEventListener('click',loadLibrary);
 document.addEventListener('keydown',event=>{if(event.defaultPrevented||event.repeat||event.ctrlKey||event.metaKey||event.altKey||event.target.closest('input,select,textarea,button,a,[contenteditable=true]'))return;if(event.code==='Space'){event.preventDefault();$('#play-button').click();}if(event.key==='ArrowRight')seek(currentPosition()+2);if(event.key==='ArrowLeft')seek(currentPosition()-2);});
 
@@ -413,7 +417,7 @@ function resizeTimeline(){
   $('#zoom-value').textContent=`${Number(effective.toFixed(2))}×`;
   $('#zoom-value').title=capped?`Выбрано ${state.zoom}×; масштаб ограничен для чтения следующих слов за 3 секунды.`:'';
   const scroller=$('#timeline-scroller'),canvas=$('#timeline-canvas'),spacer=$('#timeline-spacer'),height=Math.max(200,scroller.clientHeight),width=Math.max(320,scroller.clientWidth);
-  spacer.style.width=`${Math.max(width,state.duration*pixelsPerSecond()+82)}px`;spacer.style.height=`${state.follow!=='off'?height:Math.max(height,126+(state.midiMax-state.midiMin+1)*rowHeight()+28)}px`;canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;const dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
+  spacer.style.width=`${Math.max(width,state.duration*pixelsPerSecond()+82)}px`;spacer.style.height=`${state.follow!=='off'?height:Math.max(height,(timelineGraphTop()+16)+(state.midiMax-state.midiMin+1)*rowHeight()+28)}px`;canvas.style.width=`${width}px`;canvas.style.height=`${height}px`;const dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
   const overview=$('#overview-canvas'),overviewWidth=Math.max(180,overview.clientWidth),overviewHeight=Math.max(42,overview.clientHeight);overview.width=Math.round(overviewWidth*dpr);overview.height=Math.round(overviewHeight*dpr);rememberScroll();state.labelLayout=null;
 }
 function makePeaks(){
@@ -425,16 +429,19 @@ function updatePitchRange(){
   const pitches=[...activeNotes().map(note=>note.midi),...(state.melody?.pitch_frames||[]).map(frame=>frame.midi)].filter(value=>Number.isFinite(value));
   state.midiMin=pitches.length?Math.max(0,Math.floor(pitches.reduce((min,pitch)=>Math.min(min,pitch),127))-2):48;
   state.midiMax=pitches.length?Math.min(127,Math.ceil(pitches.reduce((max,pitch)=>Math.max(max,pitch),0))+2):72;
-  state.baseRow=Math.max(1,($('#timeline-scroller').clientHeight-154)/(state.midiMax-state.midiMin+1));
+  state.baseRow=Math.max(1,($('#timeline-scroller').clientHeight-timelineGraphTop()-44)/(state.midiMax-state.midiMin+1));
 }
-function rowHeight(){const range=timelineRange();return state.follow==='off'?state.baseRow*state.heightZoom:Math.max(1,($('#timeline-scroller').clientHeight-154)/(range.max-range.min+1));}
-function midiY(midi){return 126+(timelineRange().max-midi+.5)*rowHeight()-$('#timeline-scroller').scrollTop;}
+function timelineGraphTop(){return window.ManualEditor?.active()?window.ManualEditor.graphTop():110;}
+function rowHeight(){const range=timelineRange();return state.follow==='off'?state.baseRow*state.heightZoom:Math.max(1,($('#timeline-scroller').clientHeight-timelineGraphTop()-44)/(range.max-range.min+1));}
+function midiY(midi){return (timelineGraphTop()+16)+(timelineRange().max-midi+.5)*rowHeight()-$('#timeline-scroller').scrollTop;}
 function noteLabels(note){
+  if(window.SyllableEditor&&!window.SyllableEditor.legacy)return window.SyllableEditor.labels(note);
+  if(window.ManualEditor?.active())return [];
   const links=note.labels||state.learning?.note_text_links?.filter(link=>link.note_id===note.id);
   if(links?.length)return links.map(link=>{const part=state.learning?.text_parts?.find(part=>part.id===link.part_id);return {...link,text:link.text||part?.text||'',context:link.context||link.status==='context'||link.kind==='lyric-context',fallback:link.fallback||link.kind==='whole-word-fallback'||part?.kind==='whole-word-fallback'||part?.status==='fallback'||link.status==='fallback',approximate:link.approximate||['approximate','context'].includes(link.status)||part?.status==='approximate',reason:link.reason||part?.reason,message:link.message||part?.message};});
   const words=state.words.filter(word=>word.links?.some(link=>link.note_id===note.id));
   if(words.length)return words.map(word=>({word_id:word.id,text:word.text,start:Math.max(note.start,word.start??note.start),end:Math.min(note.end,word.end??note.end),fallback:true,reason:'часть слова не определена'}));
-  return [{text:'Нет текста',start:note.start,end:note.end,missing:true}];
+  return [];
 }
 // These regions are presentation and hit targets, never new notes or attacks.
 // Missing timing keeps the original event; only known boundaries may divide it.
@@ -469,7 +476,7 @@ function timelineLabelSpans(notes){
       const identified=label.part_id!=null&&label.part_id!==''&&label.word_id!=null&&label.word_id!==''&&!label.context&&!label.missing;
       const continued=Boolean(identified&&previous?.identified&&label.continuation===true
         &&label.part_id===previous.label.part_id&&label.word_id===previous.label.word_id
-        &&Math.abs(start-previous.end)<1e-6);
+        &&(label.unit_id||Math.abs(start-previous.end)<1e-6));
       const span={note,label,start,end,identified,continued,group:continued?previous.group:{}};
       spans.push(span);previous=span;
     }
@@ -478,7 +485,7 @@ function timelineLabelSpans(notes){
 }
 function noteName(midi, bilingual=false){const latin=['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'],ru=['До','До♯','Ре','Ре♯','Ми','Фа','Фа♯','Соль','Соль♯','Ля','Ля♯','Си'],pitch=Math.round(midi),octave=Math.floor(pitch/12)-1,index=(pitch%12+12)%12;return bilingual?`${ru[index]}${octave} (${latin[index]}${octave})`:`${latin[index]}${octave}`;}
 function activeNoteIndex(position){return activeNotes().findIndex(note=>intervalsFor(note).some(interval=>interval.start<=position&&position<interval.end));}
-function wordAt(position){return state.words.find(word=>Number.isFinite(word.start)&&Number.isFinite(word.end)&&word.start<=position&&position<word.end);}
+function wordAt(position){if(window.SyllableEditor?.active()){const score=window.SyllableEditor.document(),unit=window.SyllableEditor.activeUnit(position);if(!unit)return undefined;const occurrence=score.occurrences.find(item=>item.occurrence_id===unit.occurrence_id);return state.words.find(word=>word.id===occurrence?.source_word_id)||{id:occurrence?.occurrence_id,text:occurrence?.source_text||unit.text,start:unit.start,end:unit.end,links:[]};}return state.words.find(word=>Number.isFinite(word.start)&&Number.isFinite(word.end)&&word.start<=position&&position<word.end);}
 function isApproximateWord(word){return word?.approximate??(word?.timing?.source!=='manual'&&(!word?.aligned||['interpolated','approximate_split','unknown'].includes(word?.timing?.source)));}
 function renderInspector(position=currentPosition()){
   const notes=activeNotes(),selected=!state.playing?state.selectedRegion:null,index=selected?notes.indexOf(selected.note):activeNoteIndex(position),note=index>=0?notes[index]:null;
@@ -538,6 +545,7 @@ function renderInspector(position=currentPosition()){
   $('#inspector-region-detail').textContent=region?`${formatTime(region.start)}–${formatTime(region.end)} · исходная нота ${note.id}\n${gap?'Звучание продолжается; в этом промежутке нет текстовой границы.':region.undivided?'Недостаточно временных связей: нота показана целиком, границы не придуманы.':region.ambiguous?'≈ Связи слов перекрываются; точная граница спорная.':''}\n${linked.map(label=>`${label.context?'Контекст: ':''}${label.text} · word_id: ${label.word_id||'не задан'} · part_id: ${label.part_id||'не задан'}`).join('\n')}`:'';
 }
 $('#inspector-more').addEventListener('click',()=>$('#inspector-dialog').showModal());
+$('#inspector-correct').addEventListener('click',()=>window.SyllableEditor?.startEdit());
 $('#inspector-close').addEventListener('click',()=>$('#inspector-dialog').close());
 function navigateNote(direction){
   const notes=activeNotes();if(!notes.length)return;const position=currentPosition(),index=activeNoteIndex(position);let target=-1;
@@ -547,7 +555,7 @@ function navigateNote(direction){
 }
 $('#previous-note').addEventListener('click',()=>navigateNote(-1));$('#next-note').addEventListener('click',()=>navigateNote(1));
 $('#timeline-canvas').addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();event.stopPropagation();navigateNote(event.key==='ArrowRight'?1:-1);}});
-function drawAll(position=currentPosition()){renderInspector(position);renderUpcoming(position);drawTimeline(position);drawOverview(position);}
+function drawAll(position=currentPosition()){$('#inspector-correct').disabled=!window.SyllableEditor?.active();renderInspector(position);renderUpcoming(position);drawTimeline(position);drawOverview(position);window.SyllableEditor?.renderPosition(position);}
 // Rasterize glyphs once, then translate the same bitmap on the device-pixel grid.
 // Fractional fillText origins used to change antialiasing as the view followed time.
 function drawReadingText(ctx,text,x,y,font,color){
@@ -582,21 +590,22 @@ function readingLabelLayout(ctx,{width,height,startTime,endTime}){
       }
       if(!placed){crowded=true;continue;}
       occupied.push({x,end:x+measured+8,top:y-12,bottom:y+4});anchored.add(group);
-      labels.push({text,x,y,measured,noteX:x,noteY,noteId:note.id,wordId:label.word_id,missing:label.missing,start,end,group,label});
+      labels.push({text,x,y,measured,noteX:x,noteY,noteId:note.id,wordId:label.word_id,unitId:label.unit_id,linkId:label.link_id,missing:label.missing,start,end,group,label});
     }
     state.readingLabels={presentation,key,labels,crowded};
   }
   const labels=state.readingLabels.labels.filter(label=>label.x+label.measured+8>scroll.scrollLeft+74&&label.x<scroll.scrollLeft+width)
     .map(label=>({...label,x:label.x-scroll.scrollLeft,noteX:label.noteX-scroll.scrollLeft}));
-  // Restore a full word anchor when entering the middle of a sustained part.
-  // Its shelf is fixed; it does not reflow or displace any timeline label.
+  // The first visible continuation regains its syllable even when the left
+  // viewport edge falls in a real rest. The fixed anchor never changes timing.
   const groups=new Set(labels.filter(label=>label.text.includes(label.label.text)).map(label=>label.group));
   for(const span of presentation.spans){
-    if(span.start>=startTime||span.end<=startTime||groups.has(span.group)||span.label.missing)continue;
-    const text=`${span.label.context?'к ':span.label.approximate||span.label.fallback?'≈ ':''}${span.label.text} ─`;
-    ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width;
-    if(labels.some(label=>label.x<74+measured+8&&label.y===94))continue;
-    labels.push({text,x:74,y:94,measured,noteX:74,noteY:midiY(span.note.midi+.38),noteId:span.note.id,wordId:span.label.word_id});groups.add(span.group);
+    if(span.end<=startTime||span.start>=endTime||groups.has(span.group)||span.label.missing)continue;
+    const text=`${span.label.context?'к ':span.label.approximate||span.label.fallback?'≈ ':''}${span.label.text}${span.continued?' ─':''}`;
+    ctx.font='500 12px -apple-system,sans-serif';const measured=ctx.measureText(text).width,x=Math.max(74,74+span.start*pps-scroll.scrollLeft);
+    const existing=labels.findIndex(label=>label.group===span.group);
+    if(existing>=0)labels.splice(existing,1);
+    labels.push({text,x,y:94,measured,noteX:x,noteY:midiY(span.note.midi+.38),noteId:span.note.id,wordId:span.label.word_id,unitId:span.label.unit_id,linkId:span.label.link_id,group:span.group});groups.add(span.group);
   }
   return {labels,crowded:state.readingLabels.crowded};
 }
@@ -623,6 +632,7 @@ function upcomingWords(position){
   return timed.filter(word=>word.start>=first.start&&word.start<=until);
 }
 function renderUpcoming(position){
+  if(window.ManualEditor?.active()){$('#reading-preview').hidden=true;return;}
   const root=$('#reading-preview');root.hidden=state.follow==='off';if(root.hidden)return;
   const upcoming=upcomingWords(position),key=upcoming.map(word=>word.id).join(':');
   if(state.upcomingKey===key)return;state.upcomingKey=key;root.replaceChildren();
@@ -630,6 +640,7 @@ function renderUpcoming(position){
   for(const word of upcoming){const node=document.createElement('span');node.textContent=word.text;node.dataset.wordId=word.id;root.append(node);}
 }
 function layoutTimelineLabels(ctx,{width,height,startTime,endTime,position,noteBoxes}){
+  if(window.ManualEditor?.active())return {labels:[],crowded:false};
   if(state.follow!=='off')return readingLabelLayout(ctx,{width,height,startTime,endTime});
   const presentation=timelinePresentation(),scroll=$('#timeline-scroller'),pps=pixelsPerSecond();
   const key=[scroll.scrollLeft,scroll.scrollTop,width,height,state.zoom,state.heightZoom,state.midiMax,state.baseRow,state.selectedWord,state.selectedRegion?.note.id].join(':');
@@ -667,16 +678,16 @@ function layoutTimelineLabels(ctx,{width,height,startTime,endTime,position,noteB
       }
       if(!placed){crowded=true;if(!anchored)break;continue;}
       occupied.push({x,end:x+measured+8,top:baseline-12,bottom:baseline+4});
-      labels.push({text,x,y:baseline,measured,noteX,noteY:y,noteId:note.id,wordId:label.word_id,missing:label.missing,order});anchored=true;
+      labels.push({text,x,y:baseline,measured,noteX,noteY:y,noteId:note.id,wordId:label.word_id,unitId:label.unit_id,linkId:label.link_id,missing:label.missing,order});anchored=true;
     }
   }
   labels.sort((a,b)=>a.order-b.order);
   state.labelLayout={key,priorityKey,labels,crowded};return state.labelLayout;
 }
 function drawTimeline(position){
-  const canvas=$('#timeline-canvas'),ctx=canvas.getContext('2d'),{width,height}=setupCanvas(ctx,canvas),scroller=$('#timeline-scroller'),pps=pixelsPerSecond(),keyboard=74,startTime=Math.max(0,scroller.scrollLeft/pps),endTime=startTime+(width-keyboard)/pps;
+  const canvas=$('#timeline-canvas'),ctx=canvas.getContext('2d'),{width,height}=setupCanvas(ctx,canvas),scroller=$('#timeline-scroller'),pps=pixelsPerSecond(),keyboard=74,graphTop=timelineGraphTop(),startTime=Math.max(0,scroller.scrollLeft/pps),endTime=startTime+(width-keyboard)/pps;
   ctx.clearRect(0,0,width,height);ctx.fillStyle='#090c11';ctx.fillRect(0,0,width,height);
-  ctx.save();ctx.beginPath();ctx.rect(keyboard,110,width-keyboard,height-110);ctx.clip();
+  ctx.save();ctx.beginPath();ctx.rect(keyboard,graphTop,width-keyboard,height-graphTop);ctx.clip();
   for(let midi=timelineRange().min;midi<=timelineRange().max;midi++){
     const y=midiY(midi+.5),row=rowHeight();if(y+row<80||y>height)continue;
     ctx.fillStyle=[1,3,6,8,10].includes(midi%12)?'rgba(255,255,255,.018)':'rgba(255,255,255,.035)';ctx.fillRect(keyboard,y,width-keyboard,row);ctx.strokeStyle='rgba(255,255,255,.055)';ctx.beginPath();ctx.moveTo(keyboard,y);ctx.lineTo(width,y);ctx.stroke();
@@ -686,12 +697,13 @@ function drawTimeline(position){
   state.timelineHits=[];
   for(const note of activeNotes()){
     if(note.end<startTime||note.start>endTime)continue;
-    const y=midiY(note.midi+.38),h=Math.max(3,rowHeight()*.76);if(y+h<=110||y>=height)continue;
+    const y=midiY(note.midi+.38),h=Math.max(3,rowHeight()*.76);if(y+h<=graphTop||y>=height)continue;
     for(const interval of intervalsFor(note)){
       if(interval.end<startTime||interval.start>endTime)continue;
       const x=keyboard+interval.start*pps-scroller.scrollLeft,w=Math.max(1,(interval.end-interval.start)*pps);
-      ctx.fillStyle=highlightedNotes.has(note.id)?'#a9abff':note.uncertain?'#6669ae':'#8587f7';ctx.fillRect(x,y,w,h);
-      noteBoxes.push({x:Math.max(74,x),end:Math.min(width,x+w),top:Math.max(110,y),bottom:Math.min(height,y+h)});
+      ctx.fillStyle=window.SyllableEditor?.selection?.()?.source_note_id===note.id?'#8ee8ff':highlightedNotes.has(note.id)?'#a9abff':note.uncertain?'#6669ae':'#8587f7';ctx.fillRect(x,y,w,h);
+      if(window.SyllableEditor?.editing?.()&&noteLabels(note).some(label=>label.unit_id===window.SyllableEditor.selection()?.unit_id)){ctx.strokeStyle='#8ee8ff';ctx.lineWidth=2;ctx.strokeRect(x-1,y-1,w+2,h+2);ctx.lineWidth=1;}
+      noteBoxes.push({x:Math.max(74,x),end:Math.min(width,x+w),top:Math.max(graphTop,y),bottom:Math.min(height,y+h)});
       const regions=timelinePresentation().regions.get(note).filter(region=>region.start>=interval.start&&region.end<=interval.end);
       const divided=regions.length>1||regions.some(region=>region.ambiguous);
       for(const region of regions){
@@ -701,7 +713,7 @@ function drawTimeline(position){
           ctx.fillRect(left,y+1,right-left,Math.max(1,h-2));
           if(region.start>interval.start){ctx.strokeStyle='#242638';ctx.beginPath();ctx.moveTo(left,y+1);ctx.lineTo(left,y+h-1);ctx.stroke();}
         }
-        state.timelineHits.push({...region,x:Math.max(74,left),endX:Math.min(width,right),y:Math.max(110,y),endY:Math.min(height,y+h)});
+        state.timelineHits.push({...region,x:Math.max(74,left),endX:Math.min(width,right),y:Math.max(graphTop,y),endY:Math.min(height,y+h)});
       }
     }
   }
@@ -711,24 +723,28 @@ function drawTimeline(position){
   // partially clipped notes a readable anchor without putting text in a bar.
   ctx.restore();ctx.save();ctx.beginPath();ctx.rect(keyboard,80,width-keyboard,height-80);ctx.clip();
   const labelLayout=layoutTimelineLabels(ctx,{width,height,startTime,endTime,position,noteBoxes});
+  state.syllableLabelHits=labelLayout.labels;
+  const activeSyllable=window.SyllableEditor?.activeUnit(position);
   for(const label of labelLayout.labels){
-    ctx.strokeStyle='#8587f7';ctx.beginPath();ctx.moveTo(label.noteX+3,Math.max(110,label.noteY));ctx.lineTo(label.x+3,label.y+2);ctx.stroke();
+    ctx.strokeStyle='#8587f7';ctx.beginPath();ctx.moveTo(label.noteX+3,Math.max(graphTop,label.noteY));ctx.lineTo(label.x+3,label.y+2);ctx.stroke();
     ctx.fillStyle='#111827';ctx.fillRect(label.x,label.y-12,label.measured+8,16);
-    ctx.fillStyle=label.missing?'#aeb5c4':'#f4f6fb';ctx.font='500 12px -apple-system,sans-serif';
+    ctx.fillStyle=label.unitId&&label.unitId===activeSyllable?.unit_id?'#8ee8ff':label.missing?'#aeb5c4':'#f4f6fb';ctx.font='500 12px -apple-system,sans-serif';
     if(state.follow==='off')ctx.fillText(label.text,label.x+4,label.y);
     else drawReadingText(ctx,label.text,label.x+4,label.y,ctx.font,ctx.fillStyle);
   }
   $('#label-density-hint').hidden=!labelLayout.crowded;
   ctx.restore();
-  ctx.save();ctx.beginPath();ctx.rect(0,110,keyboard,height-110);ctx.clip();ctx.fillStyle='#0d1015';ctx.fillRect(0,110,keyboard,height-110);
+  ctx.save();ctx.beginPath();ctx.rect(0,graphTop,keyboard,height-graphTop);ctx.clip();ctx.fillStyle='#0d1015';ctx.fillRect(0,graphTop,keyboard,height-graphTop);
   for(let midi=timelineRange().min;midi<=timelineRange().max;midi++){const y=midiY(midi+.5),row=rowHeight();if(y+row<80||y>height)continue;const black=[1,3,6,8,10].includes(midi%12);ctx.fillStyle=black?'#161a21':'#e5e7eb';ctx.fillRect(0,y,72,row);if(black){ctx.fillStyle='#242b38';ctx.fillRect(0,y,44,row);}ctx.strokeStyle='#303541';ctx.strokeRect(0,y,72,row);if(row>=10||midi%12===0){ctx.fillStyle=black?'#e5e7eb':'#252a34';ctx.font='10px -apple-system,sans-serif';ctx.fillText(noteName(midi),47,y+row/2+3);}}
   ctx.restore();
   // The ruler and waveform stay fixed vertically and share the timeline x-axis.
-  ctx.fillStyle='#0d1015';ctx.fillRect(0,0,width,80);ctx.save();ctx.beginPath();ctx.rect(keyboard,0,width-keyboard,80);ctx.clip();
+  ctx.fillStyle='#0d1015';ctx.fillRect(0,0,width,graphTop-30);ctx.save();ctx.beginPath();ctx.rect(keyboard,0,width-keyboard,Math.max(80,graphTop-30));ctx.clip();
   for(let second=Math.floor(startTime);second<=endTime+1;second++){if(second%(pps>100?1:5)!==0)continue;const x=keyboard+second*pps-scroller.scrollLeft;ctx.fillStyle='#aeb5c4';ctx.font='11px -apple-system,sans-serif';ctx.fillText(formatTime(second,false),x+5,18);}
   ctx.strokeStyle='rgba(133,135,247,.65)';ctx.beginPath();for(let x=keyboard;x<width;x++){const time=startTime+(x-keyboard)/pps,index=Math.floor(time/state.duration*state.peaks.length),peak=state.peaks[index]||0;ctx.moveTo(x,35-peak*10);ctx.lineTo(x,35+peak*10);}ctx.stroke();
   // The lyric lane is independent of detected notes and vertical pitch scroll.
-  if(state.follow!=='off'){
+  if(window.SyllableEditor&&!window.SyllableEditor.legacy){
+    // The score owns the only text layer; canonical TXT remains below the chart.
+  }else if(state.follow!=='off'){
     for(const label of readingWordsLayout(ctx)){
       const x=label.x-scroller.scrollLeft;
       if(x+label.measured<keyboard||x>width)continue;
@@ -745,6 +761,7 @@ function drawTimeline(position){
   }
   }
   ctx.restore();
+
   const playX=keyboard+position*pps-scroller.scrollLeft;if(playX>=keyboard){ctx.strokeStyle='#58d8ff';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(playX,0);ctx.lineTo(playX,height);ctx.stroke();ctx.lineWidth=1;}
   ctx.strokeStyle='rgba(255,255,255,.16)';ctx.beginPath();ctx.moveTo(keyboard-.5,0);ctx.lineTo(keyboard-.5,height);ctx.moveTo(0,79.5);ctx.lineTo(width,79.5);ctx.stroke();
 }
@@ -756,6 +773,7 @@ function drawOverview(position){
 $('#timeline-scroller').addEventListener('scroll',()=>{observeTimelineScroll();drawAll();});
 $('#timeline-canvas').addEventListener('click',event=>{
   const rect=event.currentTarget.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;if(x<74)return;
+  if(window.SyllableEditor?.hit(state.timelineHits,state.syllableLabelHits||[],x,y)){drawAll();return;}
   const time=($('#timeline-scroller').scrollLeft+x-74)/pixelsPerSecond();
   const hit=state.timelineHits.find(region=>x>=region.x&&x<region.endX&&y>=region.y&&y<=region.endY);
   seek(time);
@@ -778,10 +796,23 @@ scroller.addEventListener('keydown',event=>{
   const before=scroller[axis],after=Math.max(0,Math.min(max,before+Math.max(1,page)*direction));
   if(after!==before){event.preventDefault();event.stopPropagation();suspendFollow();moveTimeline(axis==='scrollLeft'?after:undefined,axis==='scrollTop'?after:undefined);drawAll();}
 });
-window.addEventListener('resize',()=>{resizeTimeline();followPosition(currentPosition(),{immediate:true});drawAll();});
+window.addEventListener('resize',()=>{resizeTimeline();followPosition(currentPosition(),{immediate:true});drawAll();window.SyllableEditor?.positionPanel();});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(state.playing)followPosition(currentPosition(),{immediate:true});drawAll();}});
 try{state.follow=localStorage.getItem(followStorageKey)==='true'?'following':'off';}catch(_){}
 rememberScroll();renderFollow();
+async function bindScorePiano(snapshot){
+  const request=state.jobRequest,job=state.job?.id;
+  if(!snapshot.source_piano_url)return;
+  state.scorePianoMismatch=Boolean(state.learning&&state.learning.cache_key!==snapshot.full_melody_key);
+  if(state.learning?.cache_key===snapshot.full_melody_key){renderModes();return;}
+  try{
+    const buffer=await fetchBuffer(snapshot.source_piano_url,undefined,state.duration);if(request!==state.jobRequest||job!==state.job?.id)return;
+    const data={...state.learning,mode:snapshot.full_melody_mode,cache_key:snapshot.full_melody_key,notes:snapshot.notes,artifacts:{'piano.wav':snapshot.source_piano_url,'learning.json':`/api/studio/jobs/${job}/v3/${snapshot.full_melody_mode}/${snapshot.full_melody_key}/learning.json`}};
+    state.modeCache.set('full',{data,buffer});state.tempoCache.clear();await requestPlayback('full',1);
+    if(state.scorePianoMismatch)showTransportStatus('Открыта сохранённая ручная ревизия с её прежними нотами и пианино. Для этой базы доступна скорость 1×.',{info:true});
+  }catch(error){if(request===state.jobRequest){pause();delete state.buffers.piano;showTransportStatus(`Пианино сохранённой базы недоступно: ${error.message}. Новая нотная база не подставлена.`);}throw error;}
+}
+window.SyllableEditor?.init({noteName,pause,suspendFollow,useScorePiano:bindScorePiano,editorAnchor:()=>$('#timeline-scroller').getBoundingClientRect(),revealEditor:selection=>{const scroll=$('#timeline-scroller');scroll.scrollIntoView({block:'center',behavior:'instant'});const note=activeNotes().find(note=>note.id===selection.source_note_id);if(Number.isFinite(selection.start))moveTimeline(selection.start*pixelsPerSecond()-140);if(note&&state.follow==='off')moveTimeline(undefined,scroll.scrollTop+midiY(note.midi)-(timelineGraphTop()+(scroll.clientHeight-timelineGraphTop())*.5));drawAll();},useScoreNotes:notes=>{state.scoreNotes=notes;updatePitchRange();state.presentation=null;resizeTimeline();},position:currentPosition,pps:pixelsPerSecond,rate:()=>state.rate,format:formatTime,draw:()=>{resizeTimeline();drawAll();},seek,play,open:openJob,togglePlay:()=>state.playing||state.starting?pause():play(),karaoke:setKaraoke,drawText:drawReadingText,scroll:value=>moveTimeline(value),scrollLeft:()=>$('#timeline-scroller').scrollLeft,invalidate:()=>{state.presentation=null;state.inspectorKey=null;state.wordContextKey=null;state.labelLayout=null;state.readingLabels=null;state.upcomingKey=null;}});
 loadLibrary();
 if(window.location?.search){
   const params=new URLSearchParams(window.location.search),initialJob=params.get('job');
